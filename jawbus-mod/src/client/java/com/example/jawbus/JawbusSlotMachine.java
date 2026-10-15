@@ -81,7 +81,7 @@ public final class JawbusSlotMachine implements ClientModInitializer {
     private enum Drop {
         SILVER_MAGMAFISH("Silver Magmafish", Rarity.COMMON, 60.0, Items.COD, false),
         MAGMA_LORD_FRAGMENTS("Magma Lord Fragments", Rarity.UNCOMMON, 25.0, Items.MAGMA_CREAM, false),
-        CARMINE_DYE("Carmine Dye", Rarity.RARE, 8.0, Items.RED_DYE, true),
+        CARMINE_DYE("Carmine Dye", Rarity.RARE, 8.0, Items.REDSTONE, true),
         LORD_JAWBUS_SHARDS("Lord Jawbus Shards", Rarity.RARE, 5.0, Items.NETHERITE_SCRAP, false),
         BOBBIN_SCRIPTURES("Bobbin Scriptures", Rarity.VERY_RARE, 1.8, Items.ENCHANTED_BOOK, true),
         RADIOACTIVE_VIAL("Radioactive Vial", Rarity.EXTREMELY_RARE, 0.2, Items.EXPERIENCE_BOTTLE, true);
@@ -316,7 +316,6 @@ public final class JawbusSlotMachine implements ClientModInitializer {
         if (roll == null) return;
 
         Minecraft mc = Minecraft.getInstance();
-        if (mc.options.hideGui) return; // respect F1
         Font font = mc.font;
 
         float t = age + deltaTracker.getGameTimeDeltaPartialTick(false);
