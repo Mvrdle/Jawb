@@ -1,0 +1,23 @@
+{
+	"schemaVersion": 1,
+	"id": "jawbusslots",
+	"version": "${version}",
+	"name": "Jawbus Slots",
+	"description": "Client-side Lord Jawbus slot machine HUD overlay.",
+	"authors": [
+		"You"
+	],
+	"license": "CC0-1.0",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"com.example.jawbus.JawbusSlotMachine"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
