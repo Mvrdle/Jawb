@@ -452,7 +452,8 @@ final class Golem3D {
     private static final class Pose {
         final double[] rx = new double[NJ], ry = new double[NJ], rz = new double[NJ];
         double tx, ty, tz;
-        double heat, growth, pitch = 0.16, yaw = 0.30, zoom = 1.0;
+        final double[] g = new double[3];     // crack growth of stage 1, 2, 3 (0..1)
+        double heat, pitch = 0.16, yaw = 0.30, zoom = 1.0;
         double tgy = 22, tgz = 0;   // camera target (follows the body when it falls toward the viewer)
         double lying;      // 0..1, how far the body has fallen (for the shadow)
     }
@@ -468,36 +469,67 @@ final class Golem3D {
         return w;
     }
 
+    private static void shake(Pose p, double t, double amp, double f) {
+        double s1 = Math.sin(t * 83 * f), s2 = Math.sin(t * 71 * f + 1.3), s3 = Math.sin(t * 97 * f + 2.1), s4 = Math.sin(t * 61 * f + 0.4), s5 = Math.sin(t * 53 * f + 3.3);
+        p.tx += 0.5 * amp * s1;
+        p.tz += 0.22 * amp * s2;
+        p.rz[TORSO] += 0.038 * amp * s2;
+        p.rx[TORSO] += 0.022 * amp * s4;
+        p.rx[HEAD] += 0.165 * amp * s3;
+        p.rz[HEAD] += 0.135 * amp * s4;
+        p.ry[HEAD] += 0.125 * amp * s5;
+        p.rz[ARM_A] += 0.21 * amp * s4;
+        p.rz[ARM_B] -= 0.21 * amp * s5;
+        p.rx[ARM_A] += 0.19 * amp * s3;
+        p.rx[ARM_B] += 0.19 * amp * s1;
+        p.rx[UL_A] += 0.045 * amp * s5;
+        p.rx[UL_B] -= 0.045 * amp * s3;
+    }
+
+    /**
+     * The staged "catch" sequence. Stage 1 (every tier): the first fissure, twitch, stagger. Tier 2 and 3 then pause,
+     * rocking like a shaking ball, and go on to stage 2 (cracks spread over the upper body, violent shaking) and,
+     * for tier 3, stage 3 (cracks everywhere, white-hot, silent pause, detonation). Tier 1 ends after stage 1 with
+     * the flop; tier 2 ends after stage 2 with the rupture; tier 3 ends after stage 3.
+     */
     private void pose(Pose p, double t) {
-        double cs = this.cs, ce = this.ce, burst = this.burst;
-        double rise = 1 - ease(t / 0.4);
-        p.ty -= 5 * rise;
-        double s1 = Math.sin(t * 83), s2 = Math.sin(t * 71 + 1.3), s3 = Math.sin(t * 97 + 2.1), s4 = Math.sin(t * 61 + 0.4), s5 = Math.sin(t * 53 + 3.3);
+        final double burst = this.burst;
+        final double cs1 = cs[0], ce1 = ce[0];
+        p.g[0] = ease((t - cs1) / (ce1 - cs1));
+        double u3 = 0;
+        if (tier >= 2) p.g[1] = ease((t - cs[1]) / (ce[1] - cs[1]));
+        if (tier >= 3) {
+            u3 = clamp01((t - cs[2]) / (ce[2] - cs[2]));
+            p.g[2] = 1 - Math.pow(1 - u3, 2.3);
+        }
+        p.ty -= 5 * (1 - ease(t / 0.4));
+
+        // ---- stage 1: idle, first crack, twitch, stagger back (identical for all tiers) ----
+        double idle = 1 - clamp01((t - ce1) / 0.15);
+        p.rx[TORSO] += 0.02 * Math.sin(t * 2.4) * idle;
+        p.rz[ARM_A] += 0.04 * Math.sin(t * 2.0) * idle;
+        p.rz[ARM_B] -= 0.04 * Math.sin(t * 2.0 + 1) * idle;
+        double tw = t - ce1;
+        if (tw > 0 && tw < 0.25) {
+            double k = 1 - tw / 0.25;
+            p.rz[TORSO] += 0.07 * Math.sin(tw * 70) * k;
+            p.rx[ARM_A] += 0.5 * Math.sin(tw * 55) * k;
+            p.rx[ARM_B] -= 0.5 * Math.sin(tw * 55) * k;
+            p.ry[HEAD] += 0.25 * Math.sin(tw * 65) * k;
+        }
+        double sb = Math.sin(Math.PI * clamp01((t - (ce1 + 0.08)) / 0.42));
+        p.rx[TORSO] += -0.20 * sb;
+        p.rx[HEAD] += 0.10 * sb;
+        p.tz -= 3.0 * sb;
+        p.rx[ARM_A] += 0.45 * sb;
+        p.rx[ARM_B] += 0.45 * sb;
+        p.rx[UL_A] += 0.18 * sb;
+        p.rx[UL_B] -= 0.18 * sb;
+
+        double heat;
         if (tier == 1) {
-            double g = ease((t - cs) / (ce - cs));
-            p.growth = g;
-            p.heat = 0.30 * g;
-            double idle = 1 - clamp01((t - ce) / 0.15);
-            p.rx[TORSO] += 0.02 * Math.sin(t * 2.4) * idle;
-            p.rz[ARM_A] += 0.04 * Math.sin(t * 2.0) * idle;
-            p.rz[ARM_B] -= 0.04 * Math.sin(t * 2.0 + 1) * idle;
-            double tw = t - ce;
-            if (tw > 0 && tw < 0.25) {                           // twitch
-                double k = 1 - tw / 0.25;
-                p.rz[TORSO] += 0.07 * Math.sin(tw * 70) * k;
-                p.rx[ARM_A] += 0.5 * Math.sin(tw * 55) * k;
-                p.rx[ARM_B] -= 0.5 * Math.sin(tw * 55) * k;
-                p.ry[HEAD] += 0.25 * Math.sin(tw * 65) * k;
-            }
-            double sb = Math.sin(Math.PI * clamp01((t - (ce + 0.08)) / 0.42));    // stagger backward
-            p.rx[TORSO] += -0.20 * sb;
-            p.rx[HEAD] += 0.10 * sb;
-            p.tz -= 3.0 * sb;
-            p.rx[ARM_A] += 0.45 * sb;
-            p.rx[ARM_B] += 0.45 * sb;
-            p.rx[UL_A] += 0.18 * sb;
-            p.rx[UL_B] -= 0.18 * sb;
-            double tTip = ce + 0.42;
+            // ---- tier 1 ends here: the body tips forward, the knees buckle and it flops ----
+            double tTip = ce1 + 0.42;
             double u = clamp01((t - tTip) / (burst - tTip));
             double tau = Math.max(0, t - burst);
             double theta = 1.50 * Math.pow(u, 2.2) - 0.10 * Math.exp(-tau * 7) * Math.abs(Math.sin(tau * 16));
@@ -512,6 +544,7 @@ final class Golem3D {
             p.ty -= 3.0 * bend;
             p.rx[ARM_A] += 0.30 * ease(u);
             p.rx[ARM_B] += 0.30 * ease(u);
+            heat = 0.30 * p.g[0];
             if (t > burst) {
                 double k = Math.exp(-tau * 5);
                 double fl = (1 - k) + 0.25 * Math.exp(-tau * 6) * Math.sin(tau * 15);   // arms flop outward and bounce
@@ -520,81 +553,84 @@ final class Golem3D {
                 p.rx[ARM_A] += -0.15 * (1 - k);
                 p.rx[ARM_B] += -0.15 * (1 - k);
                 p.rx[HEAD] += -0.25 * Math.exp(-tau * 6) * Math.sin(tau * 14);
-                p.heat = 0.30 * g * Math.max(0, 1 - tau / 1.6);
+                heat = 0.30 * p.g[0] * Math.max(0, 1 - tau / 1.6);
             }
             p.rx[HEAD] += 0.4 * ease(u);
-            double k = ease((t - 1.55) / 0.9);
-            p.pitch = 0.16 + 0.36 * k;
-            p.tgy = 22 - 13 * k;
-            p.tgz = 22 * k;
-            p.zoom = 1 - 0.22 * k;
+            double kc = ease((t - 1.55) / 0.9);
+            p.pitch = 0.16 + 0.36 * kc;
+            p.tgy = 22 - 13 * kc;
+            p.tgz = 22 * kc;
+            p.zoom = 1 - 0.22 * kc;
             p.yaw = 0.30 - 0.06 * ease(u);
-        } else if (tier == 2) {
-            double g = ease((t - cs) / (ce - cs));
-            p.growth = g;
-            double amp;
-            double b = ease((t - ce) / (burst - ce));
-            if (t < ce) {
-                p.heat = 0.15 + 0.70 * g * g;
-                amp = g;
-            } else {
-                p.heat = 0.85 + 0.15 * b;
-                amp = 0.8 + 1.2 * b;
-            }
-            p.tx += 0.45 * amp * s1;
-            p.tz += 0.2 * amp * s2;
-            p.rz[TORSO] += 0.035 * amp * s2;
-            p.rx[TORSO] += 0.02 * amp * s4;
-            p.rx[HEAD] += 0.16 * amp * s3;
-            p.rz[HEAD] += 0.13 * amp * s4;
-            p.ry[HEAD] += 0.12 * amp * s5;
-            p.rz[ARM_A] += 0.20 * amp * s4;
-            p.rz[ARM_B] -= 0.20 * amp * s5;
-            p.rx[ARM_A] += 0.18 * amp * s3;
-            p.rx[ARM_B] += 0.18 * amp * s1;
-            p.rx[UL_A] += 0.04 * amp * s5;
-            p.rx[UL_B] -= 0.04 * amp * s3;
-            p.rx[UL_A] += -0.32 * b;
-            p.rx[UL_B] += -0.32 * b;
-            p.rx[LL_A] += 0.55 * b;
-            p.rx[LL_B] += 0.55 * b;
-            p.ty -= 2.0 * b;
-            p.rx[TORSO] += -0.14 * b;
-            p.rx[HEAD] += 0.20 * b;
-            if (t > burst) {
-                double w = ease((t - burst) / 1.2);
-                p.ty -= 5 * w;
-                p.rx[UL_A] += -0.4 * w;
-                p.rx[UL_B] += -0.4 * w;
-                p.rx[LL_A] += 0.5 * w;
-                p.rx[LL_B] += 0.5 * w;
-                p.heat = 1 - 0.5 * w;
-            }
-            p.pitch = 0.15;
-            p.zoom = 1 + 0.06 * g;
         } else {
-            double u = clamp01((t - cs) / (ce - cs));
-            double g = 1 - Math.pow(1 - u, 2.3);
-            p.growth = g;
-            p.heat = 0.1 + 0.9 * Math.pow(u, 1.7);
-            double amp = t < ce ? 0.2 + 1.6 * g : 0.35 + 0.12 * Math.sin(t * 40);
-            double f = t < ce ? 1 + 0.5 * u : 1.5;
-            p.tx += 0.55 * amp * Math.sin(t * 83 * f);
-            p.tz += 0.25 * amp * Math.sin(t * 71 * f + 1.3);
-            p.rz[TORSO] += 0.04 * amp * Math.sin(t * 71 * f + 1.3);
-            p.rx[TORSO] += 0.025 * amp * Math.sin(t * 61 * f + 0.4) - 0.10 * g;
-            p.rx[HEAD] += 0.17 * amp * Math.sin(t * 97 * f + 2.1) - 0.25 * g;
-            p.rz[HEAD] += 0.14 * amp * Math.sin(t * 61 * f + 0.4);
-            p.ry[HEAD] += 0.13 * amp * Math.sin(t * 53 * f + 3.3);
-            p.rz[ARM_A] += 0.22 * amp * Math.sin(t * 61 * f + 0.4) + 0.28 * g;
-            p.rz[ARM_B] += -0.22 * amp * Math.sin(t * 53 * f + 3.3) - 0.28 * g;
-            p.rx[ARM_A] += 0.2 * amp * Math.sin(t * 97 * f + 2.1);
-            p.rx[ARM_B] += 0.2 * amp * Math.sin(t * 83 * f);
-            p.rx[UL_A] += 0.05 * amp * Math.sin(t * 53 * f);
-            p.rx[UL_B] -= 0.05 * amp * Math.sin(t * 97 * f);
-            p.pitch = 0.14;
-            p.zoom = 1 + 0.10 * g;
+            // ---- stage 1 beat: the golem rocks forward as if about to fall, then holds (the first "shake") ----
+            double wf = Math.sin(Math.PI * clamp01((t - (ce1 + 0.5)) / 0.4));
+            p.rx[TORSO] += 0.14 * wf;
+            p.rx[HEAD] -= 0.06 * wf;
+            p.tz += 1.5 * wf;
+            p.rx[ARM_A] -= 0.20 * wf;
+            p.rx[ARM_B] -= 0.20 * wf;
+            heat = 0.05 + 0.25 * p.g[0];
+            if (t > ce1 && t < cs[1]) heat += 0.04 * Math.sin(t * 9);        // heartbeat while paused
+            double amp = 0, f = 1;
+            double g2 = p.g[1];
+            heat = Math.max(heat, 0.30 + 0.50 * g2 * g2);
+            if (t >= cs[1]) {
+                // ---- stage 2: cracks spread over the upper body, the golem shakes violently ----
+                if (t < ce[1]) {
+                    amp = 0.2 + 0.9 * g2;
+                } else if (tier == 2) {
+                    double b = ease((t - ce[1]) / (burst - ce[1]));              // buckle until the rupture
+                    amp = 1.1 + 0.9 * b;
+                    heat = Math.max(heat, 0.85 + 0.15 * b);
+                    p.rx[UL_A] += -0.32 * b;
+                    p.rx[UL_B] += -0.32 * b;
+                    p.rx[LL_A] += 0.55 * b;
+                    p.rx[LL_B] += 0.55 * b;
+                    p.ty -= 2.0 * b;
+                    p.rx[TORSO] += -0.14 * b;
+                    p.rx[HEAD] += 0.20 * b;
+                    if (t > burst) {
+                        double w = ease((t - burst) / 1.2);
+                        p.ty -= 5 * w;
+                        p.rx[UL_A] += -0.4 * w;
+                        p.rx[UL_B] += -0.4 * w;
+                        p.rx[LL_A] += 0.5 * w;
+                        p.rx[LL_B] += 0.5 * w;
+                        heat = 1 - 0.5 * w;
+                    }
+                } else {
+                    double q = t - ce[1];                                         // tier 3: a hard shudder, then calm again
+                    amp = 0.10 + 1.3 * Math.exp(-q * 7);
+                    p.ty += 1.0 * Math.max(0, Math.sin(q * 14)) * Math.exp(-q * 5);
+                }
+                if (tier == 3) {
+                    p.rz[ARM_A] += 0.12 * g2;
+                    p.rz[ARM_B] -= 0.12 * g2;
+                }
+            } else if (t >= ce1) {
+                amp = 0.08;
+            }
+            if (tier >= 3 && t >= cs[2]) {
+                // ---- stage 3: cracks everywhere, white-hot, then the (nearly frozen) pause ----
+                heat = Math.max(heat, 0.80 + 0.20 * Math.pow(u3, 1.4));
+                if (t < ce[2]) {
+                    amp = 0.2 + 1.6 * p.g[2];
+                    f = 1 + 0.5 * u3;
+                } else {
+                    amp = 0.35 + 0.12 * Math.sin(t * 40);
+                    f = 1.5;
+                }
+                p.rz[ARM_A] += 0.28 * p.g[2];
+                p.rz[ARM_B] -= 0.28 * p.g[2];
+                p.rx[HEAD] += -0.25 * p.g[2];
+                p.rx[TORSO] += -0.10 * p.g[2];
+            }
+            if (amp > 0) shake(p, t, amp, f);
+            p.pitch = tier == 2 ? 0.15 : 0.14;
+            p.zoom = 1 + 0.06 * g2 + (tier >= 3 ? 0.06 * p.g[2] : 0);
         }
+        p.heat = heat;
     }
 
     // ------------------------------------------------------------------
@@ -603,7 +639,8 @@ final class Golem3D {
 
     private int tier;
     private boolean vial;
-    private double cs, ce, burst;
+    private double[] cs = {0.35, 2.0, 4.0}, ce = {1.1, 3.0, 6.0};   // stage schedule (crack growth start/end)
+    private double burst;
     private double[] launch;       // launch time per chunk (or +inf)
     private double[][] vel, spin;  // per chunk
     private double[][] frozen;     // cached joint-frame matrix at launch
@@ -636,14 +673,14 @@ final class Golem3D {
         return c;
     }
 
-    void begin(int tier, boolean vial, long seed, double cs, double ce, double burst) {
+    void begin(int tier, boolean vial, long seed, double[] cs, double[] ce, double burst) {
         this.tier = Math.max(1, Math.min(3, tier));
         this.vial = vial;
-        this.cs = cs;
-        this.ce = ce;
+        this.cs = cs.clone();
+        this.ce = ce.clone();
         this.burst = burst;
         Model m = model();
-        m.ensure(this.tier);
+        for (int k = 1; k <= this.tier; k++) m.ensure(k);
         Random r = new Random(seed);
         int n = m.chunks.size();
         launch = new double[n];
@@ -684,21 +721,18 @@ final class Golem3D {
         if (this.tier == 1) {
             for (int i = 0; i < 9; i++) chips.add(chip(r, burst + r.nextDouble() * 0.06, 1.0, true, 16 + 16 * r.nextDouble(), 0.9));
         } else if (this.tier == 2) {
-            for (int i = 0; i < 16; i++) {
-                chips.add(chip(r, cs + (ce - cs) * (0.55 + 0.45 * r.nextDouble()), 1.2, false, 10 + 14 * r.nextDouble(), 1.3 + r.nextDouble()));
-            }
-            for (int i = 0; i < 18; i++) {
-                chips.add(chip(r, cs + (ce - cs) * (0.4 + 0.6 * r.nextDouble()), 1.0, true, 8 + 12 * r.nextDouble(), 0.8));
-            }
+            double a = this.cs[1], b = burst - 0.05;
+            for (int i = 0; i < 16; i++) chips.add(chip(r, a + (b - a) * (0.5 + 0.5 * r.nextDouble()), 1.2, false, 10 + 14 * r.nextDouble(), 1.3 + r.nextDouble()));
+            for (int i = 0; i < 18; i++) chips.add(chip(r, a + (b - a) * (0.3 + 0.7 * r.nextDouble()), 1.0, true, 8 + 12 * r.nextDouble(), 0.8));
             for (int i = 0; i < 16; i++) chips.add(shard(r, false, 30 + 35 * r.nextDouble()));
             for (int i = 0; i < 22; i++) chips.add(shard(r, true, 25 + 45 * r.nextDouble()));
         } else {
-            for (int i = 0; i < 26; i++) {
-                chips.add(chip(r, cs + (ce - cs) * (0.30 + 0.70 * r.nextDouble()), 1.3, false, 12 + 16 * r.nextDouble(), 1.3 + r.nextDouble()));
-            }
-            for (int i = 0; i < 70; i++) {
-                chips.add(chip(r, cs + (ce - cs) * (0.20 + 0.85 * r.nextDouble()), 1.0, true, 10 + 16 * r.nextDouble(), 0.8));
-            }
+            double a = this.cs[1], b = this.ce[1];
+            for (int i = 0; i < 8; i++) chips.add(chip(r, a + (b - a) * (0.5 + 0.5 * r.nextDouble()), 1.2, false, 10 + 12 * r.nextDouble(), 1.3 + r.nextDouble()));
+            for (int i = 0; i < 12; i++) chips.add(chip(r, a + (b - a) * (0.3 + 0.7 * r.nextDouble()), 1.0, true, 8 + 12 * r.nextDouble(), 0.8));
+            double c = this.cs[2], d = this.ce[2];
+            for (int i = 0; i < 26; i++) chips.add(chip(r, c + (d - c) * (0.30 + 0.70 * r.nextDouble()), 1.3, false, 12 + 16 * r.nextDouble(), 1.3 + r.nextDouble()));
+            for (int i = 0; i < 70; i++) chips.add(chip(r, c + (d - c) * (0.20 + 0.85 * r.nextDouble()), 1.0, true, 10 + 16 * r.nextDouble(), 0.8));
             double mult = vial ? 1.25 : 1.0;
             for (int i = 0; i < Math.round(40 * mult); i++) chips.add(shard(r, false, (55 + 70 * r.nextDouble()) * mult));
             for (int i = 0; i < Math.round(60 * mult); i++) chips.add(shard(r, true, (50 + 85 * r.nextDouble()) * mult));
@@ -767,7 +801,7 @@ final class Golem3D {
 
     private void poseAt(Pose p, double t) {
         double te = t;
-        if (tier == 3 && t > ce) te = ce + (t - ce) * 0.04;       // the build-up almost freezes before detonation
+        if (tier == 3 && t > ce[2]) te = ce[2] + (t - ce[2]) * 0.04;       // the build-up almost freezes before detonation
         pose(p, te);
         if (tier == 3 && t > burst) p.heat = Math.max(0.12, 1 - (t - burst) * 0.9);
     }
@@ -776,7 +810,8 @@ final class Golem3D {
     // Rendering
     // ------------------------------------------------------------------
 
-    private double curGrowth, curHeat, curCore;
+    private double[] curG = new double[3];
+    private double curHeat, curCore;
     private int curTier;
     private double[] lightDir = norm(-0.45, 0.55, 0.70);
 
@@ -792,7 +827,7 @@ final class Golem3D {
         Pose p = new Pose();
         poseAt(p, t);
         setupCamera(p);
-        curGrowth = p.growth;
+        System.arraycopy(p.g, 0, curG, 0, 3);
         curHeat = p.heat;
         curTier = tier;
         double[][] w = joints(p);
@@ -943,9 +978,6 @@ final class Golem3D {
         int y1 = Math.min(FH - 1, (int) Math.ceil(Math.max(a[1], Math.max(b[1], c[1]))));
         double inv = 1.0 / area;
         int alphaByte = (int) Math.round(clamp01(alpha) * 255);
-        float[] ct = f.crackT[curTier];
-        float[] ht = f.haloT[curTier];
-        float[] hv = f.halo[curTier];
         for (int y = y0; y <= y1; y++) {
             for (int x = x0; x <= x1; x++) {
                 double px = x + 0.5, py = y + 0.5;
@@ -977,7 +1009,7 @@ final class Golem3D {
                     if (hot > 0.85) rgb = mixRgb(rgb, 0xFFE9B0, (hot - 0.85) / 0.15 * 0.7);
                     em = (float) (hot * 0.8);
                 } else {
-                    rgb = shadeTexel(f, ti, ct, ht, hv, shade);
+                    rgb = shadeTexel(f, ti, shade);
                     em = lastEmis;
                 }
                 pix[pi] = (alphaByte << 24) | rgb;
@@ -996,7 +1028,7 @@ final class Golem3D {
         return (r << 16) | (g << 8) | b;
     }
 
-    private int shadeTexel(Face f, int ti, float[] ct, float[] ht, float[] hv, double shade) {
+    private int shadeTexel(Face f, int ti, double shade) {
         double heat = curHeat;
         double wash = curTier == 3 ? 0.30 : 0.18;
         int rgb = scaleRgb(f.base[ti], shade);
@@ -1006,17 +1038,25 @@ final class Golem3D {
             lastEmis = 0.8f;
             return mixRgb(mixRgb(0xE0701A, 0xFFE08A, heat), 0xFFFFFF, curTier == 3 ? heat * heat * 0.8 : 0);
         }
-        float c = ct[ti];
-        if (c <= curGrowth) {
-            double front = clamp01(1 - (curGrowth - c) / 0.10);
+        double front = -1, halo = 0;
+        for (int t = 1; t <= curTier; t++) {          // every stage reached so far contributes its cracks
+            double g = curG[t - 1];
+            if (g <= 0) continue;
+            if (f.crackT[t][ti] <= g) {
+                front = Math.max(front, clamp01(1 - (g - f.crackT[t][ti]) / 0.10));
+            } else if (f.haloT[t][ti] <= g) {
+                halo = Math.max(halo, f.halo[t][ti]);
+            }
+        }
+        if (front >= 0) {
             double white = curTier == 3 ? Math.pow(heat, 2.2) : heat * 0.12;
             int col = mixRgb(0xD02A00, 0xFFB030, clamp01(heat * 1.15));
             col = mixRgb(col, 0xFFF4D8, clamp01(white + front * 0.45));
             lastEmis = (float) (0.6 + 0.4 * front);
             return col;
         }
-        if (ht[ti] <= curGrowth) {
-            double h = hv[ti] * heat;
+        if (halo > 0) {
+            double h = halo * heat;
             rgb = mixRgb(rgb, 0xFF5A14, h * 0.75);
             lastEmis = (float) (h * 0.25);
         }
