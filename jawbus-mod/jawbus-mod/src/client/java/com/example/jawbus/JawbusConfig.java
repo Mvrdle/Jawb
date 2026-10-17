@@ -30,6 +30,11 @@ public final class JawbusConfig {
     public float jackpotVolume = 1.0f;
     public boolean shakeEnabled = true;
     public float shakeIntensity = 1.0f;
+    /** Hide the chat while a Lord Jawbus kill is being resolved / animated, so the reward is not spoiled. */
+    public boolean hideChat = true;
+    /** Where the animation sits: offset from the screen centre as a fraction of the screen (drag it in the menu). */
+    public float offsetX = 0f;
+    public float offsetY = 0f;
     /** Chat lines explaining what the mod saw (useful while tuning). */
     public boolean debug = true;
 
@@ -83,5 +88,7 @@ public final class JawbusConfig {
         regularVolume = c(regularVolume, 0f, 1.5f);
         jackpotVolume = c(jackpotVolume, 0f, 1.5f);
         shakeIntensity = c(shakeIntensity, 0f, 1.5f);
+        offsetX = c(offsetX, -0.45f, 0.45f);
+        offsetY = c(offsetY, -0.35f, 0.35f);
     }
 }
