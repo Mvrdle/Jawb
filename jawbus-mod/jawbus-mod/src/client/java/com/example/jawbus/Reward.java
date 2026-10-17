@@ -14,14 +14,15 @@ public enum Reward {
     MAGMA_LORD_FRAGMENT("Magma Lord Fragment", Rarity.LEGENDARY, 2, 2, "magma lord fragment"),
     LORD_JAWBUS_SHARD("Lord Jawbus Shard", Rarity.LEGENDARY, 2, 3, "lord jawbus shard"),
     BOBBIN_SCRIPTURES("Bobbin' Scriptures", Rarity.RARE, 3, 4, "bobbin scriptures"),
-    CARMINE_DYE("Carmine Dye", Rarity.LEGENDARY, 3, 5, "carmine dye"),
-    RADIOACTIVE_VIAL("Radioactive Vial", Rarity.MYTHIC, 3, 6, "radioactive vial");
+    CARMINE_DYE("Carmine Dye", Rarity.DIVINE, 3, 6, "carmine dye"),
+    RADIOACTIVE_VIAL("Radioactive Vial", Rarity.LEGENDARY, 3, 5, "radioactive vial");
 
     public enum Rarity {
         EPIC("EPIC", 0xAA00AA),
         LEGENDARY("LEGENDARY", 0xFFAA00),
         RARE("RARE", 0x5555FF),
-        MYTHIC("MYTHIC", 0xFF55FF);
+        MYTHIC("MYTHIC", 0xFF55FF),
+        DIVINE("DIVINE", 0xAA0000);   // shown in dark red
 
         public final String label;
         public final int rgb;
@@ -48,9 +49,9 @@ public enum Reward {
         this.key = key;
     }
 
-    /** Radioactive Vial gets the maximum version of tier 3. */
+    /** Carmine Dye (the rarest drop, DIVINE) gets the maximum version of tier 3. */
     public boolean maxIntensity() {
-        return this == RADIOACTIVE_VIAL;
+        return this == CARMINE_DYE;
     }
 
     /** Lower-case, no colour codes, no punctuation: "Bobbin' Scriptures" -> "bobbin scriptures". */
