@@ -6,6 +6,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.Holder;
+import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.ItemStack;
@@ -194,7 +195,31 @@ public final class Cinematic {
         };
     }
 
+    private static boolean skinTried;
+
+    /** Reads the game's own Iron Golem texture so Jawbus wears the real skin (respects resource packs). */
+    static void ensureSkin() {
+        if (skinTried) return;
+        skinTried = true;
+        try {
+            var res = Minecraft.getInstance().getResourceManager()
+                    .getResource(Identifier.fromNamespaceAndPath("minecraft", "textures/entity/iron_golem/iron_golem.png"));
+            if (res.isEmpty()) {
+                KillTracker.debug("Iron Golem texture not found, using the built-in look.");
+                return;
+            }
+            try (java.io.InputStream in = res.get().open()) {
+                java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(in);
+                int w = img.getWidth(), h = img.getHeight();
+                Golem3D.setSkin(img.getRGB(0, 0, w, h, null, 0, w), w, h);
+            }
+        } catch (Throwable ex) {
+            KillTracker.debug("Could not read the Iron Golem texture (" + ex + "), using the built-in look.");
+        }
+    }
+
     private static Playback start(Req r, boolean fast) {
+        ensureSkin();
         Icons.refresh();
         boolean vial = r.reward().maxIntensity();
         // with a backlog the reveal is shortened (never skipped) and uses fewer particles and sounds
@@ -447,8 +472,9 @@ public final class Cinematic {
         float sf = h * 0.80f * cfg.scale / Golem3D.FH;               // 3D framebuffer pixel -> GUI pixel
         float fox = cx - Golem3D.FW * sf / 2f;
         float foy = h * 0.50f + oyShift - Golem3D.FH * 0.52f * sf;
-        float chestX = fox + p.chest[0] * sf;
-        int chestY = Math.round(foy + p.chest[1] * sf);
+        boolean vg = VanillaGolem.enabled() && mc.level != null;      // the real vanilla Iron Golem entity
+        float chestX = vg ? cx : fox + p.chest[0] * sf;
+        int chestY = vg ? Math.round(h * 0.5f + oyShift - h * 0.80f * cfg.scale * 0.06f) : Math.round(foy + p.chest[1] * sf);
         boolean vial = p.reward.maxIntensity();
 
         // soft dim behind everything (never fully opaque, and it fades out with the animation)
@@ -456,7 +482,9 @@ public final class Cinematic {
         g.fill(0, 0, w, h, argb(0x000000, a * dim[tier - 1]));
 
         // ---- the 3D golem (software-rendered, painted as merged rectangles) ----
-        if (p.g3ok) {
+        boolean drewVanilla = vg && VanillaGolem.drawAt(g, tier, t, tl.cs(), tl.ce(), tl.burst(), cx,
+                h / 2 + oyShift, h, cfg.scale);
+        if (!drewVanilla && p.g3ok) {
             try {
                 G3.draw(t);
                 G3.buildRects((tier == 1 && t > tl.itemDone()) ? a * 0.6f : a);
@@ -510,10 +538,17 @@ public final class Cinematic {
                 if (p.lootShare) centered(g, font, "LOOT SHARE", cx, ny - Math.round(11 * ts * 0.7f), ts * 0.6f, argb(0x55FFFF, ta));
                 centered(g, font, p.reward.displayName, cx, ny, ts, argb(rc, ta));
                 centered(g, font, p.reward.rarity.label, cx, ny + Math.round(10 * ts), ts * 0.7f, argb(rc, ta * 0.9f));
+                int line = 19;
+                String chance = p.reward.chanceLabel(p.lootShare);
+                if (chance != null) {
+                    centered(g, font, (p.lootShare ? "Loot share chance: " : "Drop chance: ") + chance, cx,
+                            ny + Math.round(line * ts), 1.3f, argb(0xFFE9B0, ta));
+                    line += 10;
+                }
                 if (!p.others.isEmpty()) {
                     StringBuilder sb = new StringBuilder("Also: ");
                     for (int n = 0; n < p.others.size(); n++) sb.append(n > 0 ? ", " : "").append(p.others.get(n).displayName);
-                    centered(g, font, sb.toString(), cx, ny + Math.round(19 * ts), 1.2f, argb(0xAAAAAA, ta));
+                    centered(g, font, sb.toString(), cx, ny + Math.round(line * ts), 1.2f, argb(0xAAAAAA, ta));
                 }
             }
         }
@@ -535,6 +570,7 @@ public final class Cinematic {
     }
 
     private static Golem3D editorG3;
+    private static int editorVer = -1;
 
     /** A standing golem at the current animation position, drawn by the "Move animation" screen. */
     public static void renderEditor(GuiGraphicsExtractor g) {
@@ -545,8 +581,16 @@ public final class Cinematic {
         float sf = h * 0.80f * cfg.scale / Golem3D.FH;
         float fox = cx - Golem3D.FW * sf / 2f;
         float foy = h * 0.50f + Math.round(cfg.offsetY * h) - Golem3D.FH * 0.52f * sf;
+        if (VanillaGolem.enabled() && Minecraft.getInstance().level != null
+                && VanillaGolem.drawStatic(g, cx, h / 2 + Math.round(cfg.offsetY * h), h, cfg.scale)) {
+            frame(g, Math.round(fox + Golem3D.FW * sf * 0.10f), Math.round(foy + 8 * sf),
+                    Math.round(fox + Golem3D.FW * sf * 0.90f), Math.round(foy + (Golem3D.FH - 4) * sf), 1, 0xCCFFAA00);
+            return;
+        }
         try {
-            if (editorG3 == null) {
+            ensureSkin();
+            if (editorG3 == null || editorVer != Golem3D.skinVersion) {
+                editorVer = Golem3D.skinVersion;
                 editorG3 = new Golem3D();
                 editorG3.begin(2, false, 7L, new double[]{0.35, 2.3}, new double[]{1.1, 4.0}, 4.6);
             }
