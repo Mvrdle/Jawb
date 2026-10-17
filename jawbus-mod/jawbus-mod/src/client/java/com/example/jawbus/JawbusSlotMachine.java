@@ -47,7 +47,7 @@ public final class JawbusSlotMachine implements ClientModInitializer {
             Cinematic.reset();
         });
 
-        // /jawbusRoll opens the settings; extras: preview <1-4>, textures
+        // /jawbusRoll opens the settings; extras: preview <1-4>, simulate <1-6>, textures
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) ->
                 dispatcher.register(ClientCommands.literal("jawbusRoll")
                         .executes(ctx -> {
@@ -60,6 +60,12 @@ public final class JawbusSlotMachine implements ClientModInitializer {
                                             Cinematic.preview(IntegerArgumentType.getInteger(ctx, "tier"));
                                             return 1;
                                         })))
+                        .then(ClientCommands.literal("simulate")
+                                .then(ClientCommands.argument("scenario", IntegerArgumentType.integer(1, 6))
+                                        .executes(ctx -> {
+                                            KillTracker.simulate(IntegerArgumentType.getInteger(ctx, "scenario"));
+                                            return 1;
+                                        })))
                         .then(ClientCommands.literal("textures")
                                 .executes(ctx -> {
                                     Icons.refresh();
@@ -68,6 +74,11 @@ public final class JawbusSlotMachine implements ClientModInitializer {
                                     }
                                     return 1;
                                 }))));
+
+        // hide the chat while a kill is being resolved / animated, so the reward is not spoiled
+        HudElementRegistry.replaceElement(VanillaHudElements.CHAT, original -> (graphics, delta) -> {
+            if (!Cinematic.chatHidden()) original.extractRenderState(graphics, delta);
+        });
 
         // HUD element: drawn straight onto the HUD, so nothing is paused and no input is captured
         HudElementRegistry.attachElementBefore(
