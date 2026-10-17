@@ -3,7 +3,6 @@ package com.example.jawbus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
@@ -94,7 +93,6 @@ final class KillTracker {
     /** Remember every Lord Jawbus nameplate near us and where it was last seen. */
     private static void scan(Minecraft mc) {
         for (Entity e : mc.level.entitiesForRendering()) {
-            if (e.getType() != EntityType.ARMOR_STAND) continue;
             Component name = e.getCustomName();
             if (name == null || !name.getString().toLowerCase(Locale.ROOT).contains("lord jawbus")) continue;
             Tracked t = TRACKED.computeIfAbsent(e.getId(), k -> new Tracked());
