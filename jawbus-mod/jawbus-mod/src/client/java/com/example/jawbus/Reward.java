@@ -15,7 +15,7 @@ public enum Reward {
     LORD_JAWBUS_SHARD("Lord Jawbus Shard", Rarity.LEGENDARY, 2, 3, "lord jawbus shard"),
     BOBBIN_SCRIPTURES("Bobbin' Scriptures", Rarity.RARE, 3, 4, "bobbin scriptures"),
     CARMINE_DYE("Carmine Dye", Rarity.DIVINE, 3, 6, "carmine dye"),
-    RADIOACTIVE_VIAL("Radioactive Vial", Rarity.LEGENDARY, 3, 5, "radioactive vial");
+    RADIOACTIVE_VIAL("Radioactive Vial", Rarity.MYTHIC, 3, 5, "radioactive vial");
 
     public enum Rarity {
         EPIC("EPIC", 0xAA00AA),
