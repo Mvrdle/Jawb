@@ -1,7 +1,0 @@
-{
-	"required": false,
-	"package": "com.example.jawbus.mixin",
-	"compatibilityLevel": "JAVA_25",
-	"client": ["CameraMixin"],
-	"injectors": { "defaultRequire": 0 }
-}
