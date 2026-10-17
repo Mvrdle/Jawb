@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     defaults:
       run:
-        working-directory: jawbus-mod
+        working-directory: jawbus-mod/jawbus-mod
     steps:
       - name: checkout repository
         uses: actions/checkout@v6
@@ -26,4 +26,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: Artifacts
-          path: jawbus-mod/build/libs/
+          path: jawbus-mod/jawbus-mod/build/libs/
