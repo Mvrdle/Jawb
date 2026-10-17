@@ -6,30 +6,25 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.EnumMap;
-import java.util.EnumSet;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 /**
- * Decides when an animation may play, and for which reward. It NEVER picks a reward itself.
+ * Minecraft side of kill detection. It NEVER picks a reward itself.
  *
- * 1. A kill is confirmed when a "Lord Jawbus" nameplate (armor stand) that was close to you disappears.
- * 2. For the next ~12 s it looks for a known reward: a drop line in chat ("RARE DROP! ..."), or a known item
- *    that newly appears in your inventory. Items are recognised by their name.
- * 3. If one is found, the best one is sent to Cinematic. If none is found, nothing plays.
- * Loot shares are handled separately (chat line about Lord Jawbus + a known item name) and respect the toggle.
+ * 1. A kill is a "Lord Jawbus" name plate (armor stand) that was close to you and disappears. Every kill is its own
+ *    event (see KillLedger), so double hooks and overlapping kills are tracked separately.
+ * 2. Rewards come from drop lines in chat and from known items newly appearing in your inventory; KillLedger
+ *    decides which kill each belongs to (and says honestly when that is a guess).
+ * 3. Each finished kill becomes one or more reveals, queued in order. Loot-share lines are separate events.
  */
 final class KillTracker {
     private KillTracker() {
     }
 
-    private static final int WINDOW_TICKS = 240;   // 12 s to find a reward after a kill
-    private static final int SETTLE_TICKS = 40;    // after the first find, wait 2 s for a better one
-    private static final int DEDUPE_TICKS = 200;   // same reward within 10 s counts as the same event
     private static final double MAX_DIST_SQ = 40.0 * 40.0;
 
     private static final class Tracked {
@@ -37,29 +32,42 @@ final class KillTracker {
         long seen;
     }
 
-    private static final class Window {
-        final long open;
-        long firstFound = -1;
-        final EnumSet<Reward> found = EnumSet.noneOf(Reward.class);
-        final int[] base = new int[Reward.values().length];
+    private static final Map<Integer, Tracked> TRACKED = new HashMap<>();
+    private static final int[] INV_BASE = new int[Reward.values().length];
+    private static boolean invReady;
+    private static long tick;
+    private static double lastPx, lastPz;
+    private static boolean hadPos;
+    private static String lastLootLine = "";
+    private static long lastLootTick = -100;
 
-        Window(long open) {
-            this.open = open;
+    private static final KillLedger LEDGER = new KillLedger(new KillLedger.Sink() {
+        @Override
+        public void reveal(KillLedger.Result r) {
+            revealKill(r);
         }
+
+        @Override
+        public void note(String msg) {
+            debug(msg);
+        }
+    });
+
+    // ---- simulation (debug): events are fed through the same pipeline, but marked as simulated ----
+    private record SimAction(long at, Runnable run) {
     }
 
-    private static final Map<Integer, Tracked> TRACKED = new HashMap<>();
-    private static final Map<Reward, Long> RECENT = new EnumMap<>(Reward.class);
-    private static Window window;
-    private static long tick;
-    private static long lastKillTick = -100000;
-    private static double lastKx, lastKy, lastKz, lastPx, lastPz;
-    private static boolean hadPos;
+    private static final List<SimAction> SIM = new ArrayList<>();
+
+    static boolean spoilerWindowOpen() {
+        return LEDGER.spoilerOpen(tick);
+    }
 
     static void reset() {
         TRACKED.clear();
-        RECENT.clear();
-        window = null;
+        SIM.clear();
+        LEDGER.reset();
+        invReady = false;
         hadPos = false;
     }
 
@@ -86,8 +94,15 @@ final class KillTracker {
         lastPz = mc.player.getZ();
         hadPos = true;
 
+        if (!SIM.isEmpty()) runSim();
         if (tick % 4 == 0) scan(mc);
-        if (window != null) pollWindow(mc);
+        if (tick % 5 == 0) pollInventory(mc);
+        try {
+            LEDGER.tick(tick);
+        } catch (RuntimeException ex) {
+            debug("Kill tracking error (" + ex + "), state cleared.");
+            LEDGER.reset();
+        }
     }
 
     /** Remember every Lord Jawbus nameplate near us and where it was last seen. */
@@ -110,87 +125,173 @@ final class KillTracker {
         if (t == null || mc.player == null || !JawbusConfig.get().enabled) return;
         if (tick - t.seen > 12) return;                                   // stale: not a fresh disappearance
         if (mc.player.distanceToSqr(t.x, t.y, t.z) > MAX_DIST_SQ) return; // too far: probably walked out of range
-        // the boss usually has two stands (name + health): count one kill
-        if (tick - lastKillTick < 100 && sq(t.x - lastKx) + sq(t.y - lastKy) + sq(t.z - lastKz) < 64) return;
-        lastKillTick = tick;
-        lastKx = t.x;
-        lastKy = t.y;
-        lastKz = t.z;
-        if (window != null) finish(mc); // a second kill: settle the first one now
-        window = new Window(tick);
-        count(mc, window.base);
-        debug("Lord Jawbus died nearby. Looking for the reward...");
+        int n = LEDGER.onKill(tick, t.x, t.z, false);                      // -1 = another plate of a kill already open
+        if (n > 0) debug("Lord Jawbus #" + n + " died nearby. Looking for its reward...");
     }
 
-    /** Chat handler: loot shares, and drop lines while a kill window is open. */
+    /** Chat handler: loot shares, and drop lines. Always processed, whether or not the chat is visible. */
     static void onChat(String raw) {
+        handleChat(raw, false);
+    }
+
+    private static void handleChat(String raw, boolean sim) {
         JawbusConfig cfg = JawbusConfig.get();
         if (!cfg.enabled) return;
         String line = ChatRules.clean(raw);
 
         if (ChatRules.isLootShare(line)) {
             if (!cfg.lootShare) return;
+            // the very same line twice in the same tick is a double delivery; the same item at another moment
+            // (a second Jawbus) is a genuine second reward
+            if (!sim && line.equals(lastLootLine) && tick - lastLootTick == 0) return;
+            if (!sim) {
+                lastLootLine = line;
+                lastLootTick = tick;
+            }
             List<Reward> rs = Reward.findAll(line);
             Reward best = Reward.best(rs);
             if (best == null) {
                 debug("Loot share seen but no known reward in it.");
                 return;
             }
-            Long last = RECENT.get(best);
-            if (last != null && tick - last < DEDUPE_TICKS) return;
-            RECENT.put(best, tick);
             List<Reward> others = new ArrayList<>(rs);
             others.remove(best);
-            Cinematic.enqueue(best, others, true, false);
+            Cinematic.enqueue(best, others, true, sim, sim ? "SIMULATED LOOT SHARE" : null);
             debug("Loot share: " + best.displayName + " -> tier " + best.tier);
             return;
         }
-        if (window != null && ChatRules.isDropLine(line)) window.found.addAll(Reward.findAll(line));
-    }
-
-    private static void pollWindow(Minecraft mc) {
-        Window w = window;
-        if (tick % 5 == 0) {
-            int[] now = new int[Reward.values().length];
-            count(mc, now);
-            for (Reward r : Reward.values()) {
-                if (now[r.ordinal()] > w.base[r.ordinal()]) {
-                    w.found.add(r);
-                    w.base[r.ordinal()] = now[r.ordinal()];
-                }
-            }
+        if (ChatRules.isDropLine(line)) {
+            List<Reward> rs = Reward.findAll(line);
+            if (!rs.isEmpty()) LEDGER.onChat(tick, rs, sim);
         }
-        if (w.firstFound < 0 && !w.found.isEmpty()) w.firstFound = tick;
-        boolean settled = w.firstFound >= 0 && tick - w.firstFound >= SETTLE_TICKS;
-        if (settled || tick - w.open >= WINDOW_TICKS) finish(mc);
     }
 
-    private static void finish(Minecraft mc) {
-        Window w = window;
-        window = null;
-        Reward best = Reward.best(w.found);
-        if (best == null) {
-            debug("No known reward was identified for that kill, so nothing was played.");
-            return;
-        }
-        Long last = RECENT.get(best);
-        if (last != null && tick - last < DEDUPE_TICKS) return; // already shown (e.g. via loot share)
-        for (Reward r : w.found) RECENT.put(r, tick);
-        List<Reward> others = new ArrayList<>(w.found);
-        others.remove(best);
-        Cinematic.enqueue(best, others, false, false);
-        debug("Reward: " + best.displayName + " -> tier " + best.tier);
-    }
-
-    /** How many of each known reward are in the player's inventory right now (by item name). */
-    private static void count(Minecraft mc, int[] out) {
-        Arrays.fill(out, 0);
+    /** Known rewards newly appearing in the inventory count as evidence while a kill is open. */
+    private static void pollInventory(Minecraft mc) {
+        int[] now = new int[Reward.values().length];
         var inv = mc.player.getInventory();
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack s = inv.getItem(i);
             if (s.isEmpty()) continue;
             Reward r = Reward.match(s.getHoverName().getString());
-            if (r != null) out[r.ordinal()] += s.getCount();
+            if (r != null) now[r.ordinal()] += s.getCount();
+        }
+        if (invReady) {
+            for (Reward r : Reward.values()) {
+                int d = now[r.ordinal()] - INV_BASE[r.ordinal()];
+                if (d > 0) LEDGER.onInventory(tick, r, d, false);
+            }
+        }
+        System.arraycopy(now, 0, INV_BASE, 0, now.length);
+        invReady = true;
+    }
+
+    /**
+     * Reveal policy for one kill that found several rewards: every reward of tier 2 or 3 gets its own full animation,
+     * lowest priority first so the best one comes last; a tier-1 reward (Silver Magmafish) that came with a better one
+     * is listed under "Also:" on the last reveal. Nothing is discarded.
+     */
+    private static void revealKill(KillLedger.Result r) {
+        List<Reward> big = new ArrayList<>();
+        List<Reward> small = new ArrayList<>();
+        for (Reward x : r.rewards()) (x.tier >= 2 ? big : small).add(x);
+        big.sort(Comparator.comparingInt(x -> x.priority));
+        String tag = r.concurrent() ? "KILL " + r.killNumber() + (r.ambiguous() ? "  (reward match is a best guess)" : "") : null;
+        if (r.sim()) tag = "SIMULATED" + (tag == null ? "" : "  " + tag);
+        if (big.isEmpty()) {
+            for (Reward x : small) Cinematic.enqueue(x, List.of(), false, r.sim(), tag);
+        } else {
+            for (int i = 0; i < big.size(); i++) {
+                boolean last = i == big.size() - 1;
+                Cinematic.enqueue(big.get(i), last ? small : List.of(), false, r.sim(), tag);
+            }
+        }
+        StringBuilder sb = new StringBuilder("Kill " + r.killNumber() + ":");
+        for (Reward x : r.rewards()) sb.append(' ').append(x.displayName).append(" (tier ").append(x.tier).append(')');
+        if (r.ambiguous()) sb.append(" [several kills were open, so which kill got it is a best guess]");
+        debug(sb.toString());
+    }
+
+    // ------------------------------------------------------------------
+    // Debug simulation: /jawbusRoll simulate <1-6>
+    // ------------------------------------------------------------------
+
+    static final String[] SIM_NAMES = {
+            "two kills, two different rewards",
+            "two kills, same reward twice (+ one repeated line)",
+            "one kill, three drops",
+            "one kill + loot shares",
+            "three kills at once (two rewards, one empty)",
+            "drop line arrives before its kill",
+    };
+
+    private static void at(int ticksFromNow, Runnable r) {
+        SIM.add(new SimAction(tick + ticksFromNow, r));
+    }
+
+    private static void simKill(double x) {
+        int n = LEDGER.onKill(tick, x, 0, true);
+        if (n > 0) debug("[sim] Lord Jawbus #" + n + " died.");
+    }
+
+    private static void simChat(String s) {
+        handleChat(s, true);
+    }
+
+    static void simulate(int scenario) {
+        SIM.clear();
+        switch (scenario) {
+            case 1 -> {
+                at(0, () -> simKill(0));
+                at(4, () -> simKill(6));
+                at(10, () -> simChat("RARE DROP! Lord Jawbus Shard"));
+                at(12, () -> simChat("CRAZY RARE DROP! Carmine Dye"));
+            }
+            case 2 -> {
+                at(0, () -> simKill(0));
+                at(2, () -> simKill(6));
+                at(10, () -> simChat("RARE DROP! Magma Lord Fragment"));
+                at(10, () -> simChat("RARE DROP! Magma Lord Fragment"));
+                at(11, () -> simChat("RARE DROP! Magma Lord Fragment"));
+            }
+            case 3 -> {
+                at(0, () -> simKill(0));
+                at(8, () -> simChat("RARE DROP! Magma Lord Fragment"));
+                at(9, () -> simChat("RARE DROP! Silver Magmafish"));
+                at(14, () -> simChat("VERY RARE DROP! Bobbin' Scriptures"));
+            }
+            case 4 -> {
+                at(0, () -> simKill(0));
+                at(8, () -> simChat("RARE DROP! Silver Magmafish"));
+                at(10, () -> simChat("LOOT SHARE You received Magma Lord Fragment for assisting Lord Jawbus!"));
+                at(30, () -> simChat("LOOT SHARE You received Magma Lord Fragment for assisting Lord Jawbus!"));
+            }
+            case 5 -> {
+                at(0, () -> simKill(0));
+                at(3, () -> simKill(5));
+                at(6, () -> simKill(10));
+                at(12, () -> simChat("CRAZY RARE DROP! Carmine Dye"));
+                at(13, () -> simChat("RARE DROP! Radioactive Vial"));
+            }
+            default -> {
+                at(0, () -> simChat("RARE DROP! Radioactive Vial"));
+                at(6, () -> simKill(0));
+            }
+        }
+        debug("Simulating: " + SIM_NAMES[Math.max(0, Math.min(5, scenario - 1))] + ". Everything is labelled SIMULATED.");
+    }
+
+    private static void runSim() {
+        for (int i = 0; i < SIM.size(); i++) {
+            SimAction a = SIM.get(i);
+            if (tick >= a.at()) {
+                SIM.remove(i--);
+                try {
+                    a.run().run();
+                } catch (RuntimeException ex) {
+                    debug("Simulation step failed: " + ex);
+                }
+            }
         }
     }
 }
