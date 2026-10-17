@@ -32,8 +32,15 @@ public final class Cinematic {
     private Cinematic() {
     }
 
-    // cs/ce = crack growth start/end, burst = explosion/impact, itemDone = reward settled, total = end (seconds @ duration 1.0)
-    private record Tl(float cs, float ce, float burst, float itemDone, float total) {
+    // cs/ce = crack growth start/end of each stage (tier 1 has one stage, tier 2 two, tier 3 three), burst = flop /
+    // rupture / detonation, itemDone = reward settled, total = end (seconds @ duration 1.0)
+    private record Tl(float[] cs, float[] ce, float burst, float itemDone, float total) {
+    }
+
+    private static double[] dbl(float[] f) {
+        double[] d = new double[f.length];
+        for (int i = 0; i < f.length; i++) d[i] = f[i];
+        return d;
     }
 
     private record Cue(float t, Runnable action) {
@@ -43,7 +50,7 @@ public final class Cinematic {
                             float size, float delay) {
     }
 
-    private record Req(Reward reward, List<Reward> others, boolean lootShare, boolean preview) {
+    private record Req(Reward reward, List<Reward> others, boolean lootShare, boolean preview, String tag) {
     }
 
     private static final class Playback {
@@ -51,6 +58,8 @@ public final class Cinematic {
         final List<Reward> others;
         final boolean lootShare;
         final boolean preview;
+        final String tag;
+        final boolean fast;
         final int tier;
         final Tl tl;
         final float dur;
@@ -63,11 +72,13 @@ public final class Cinematic {
         float[] chest = {Golem3D.FW / 2f, Golem3D.FH * 0.5f};
         boolean g3ok = true;
 
-        Playback(Req r, Tl tl, float dur) {
+        Playback(Req r, Tl tl, float dur, boolean fast) {
             this.reward = r.reward();
             this.others = r.others();
             this.lootShare = r.lootShare();
             this.preview = r.preview();
+            this.tag = r.tag();
+            this.fast = fast;
             this.tier = r.reward().tier;
             this.tl = tl;
             this.dur = dur;
@@ -82,14 +93,39 @@ public final class Cinematic {
     private static final Golem3D G3 = new Golem3D();
     private static final ArrayDeque<Req> QUEUE = new ArrayDeque<>();
     private static Playback current;
+    private static final int MAX_QUEUE = 12;       // reveals waiting (rewards beyond this are merged, never dropped)
+    private static final int FAST_BACKLOG = 2;     // this many waiting: play shortened, lighter reveals
+    private static final long GAP_NS = 400_000_000L;
+    private static long gapUntilNs;
+    private static long hiddenSinceNs;
 
     // ------------------------------------------------------------------
     // Public API
     // ------------------------------------------------------------------
 
     /** Queue the animation for a REAL reward (tier comes from the reward itself). */
-    public static void enqueue(Reward reward, List<Reward> others, boolean lootShare, boolean preview) {
-        if (QUEUE.size() < 4) QUEUE.add(new Req(reward, others, lootShare, preview));
+    public static void enqueue(Reward reward, List<Reward> others, boolean lootShare, boolean preview, String tag) {
+        QUEUE.add(new Req(reward, new ArrayList<>(others), lootShare, preview, tag));
+        while (QUEUE.size() > MAX_QUEUE) mergeWeakest();
+    }
+
+    /** Over the cap: fold the weakest waiting reveal into the strongest one's "Also:" list. Nothing is lost. */
+    private static void mergeWeakest() {
+        List<Req> all = new ArrayList<>(QUEUE);
+        Req weak = all.get(0);
+        Req strong = all.get(0);
+        for (Req r : all) {
+            if (r.reward().priority < weak.reward().priority) weak = r;
+            if (r.reward().priority >= strong.reward().priority) strong = r;
+        }
+        if (weak == strong) return;
+        List<Reward> o = new ArrayList<>(strong.others());
+        o.add(weak.reward());
+        o.addAll(weak.others());
+        all.remove(weak);
+        all.set(all.indexOf(strong), new Req(strong.reward(), o, strong.lootShare(), strong.preview(), strong.tag()));
+        QUEUE.clear();
+        QUEUE.addAll(all);
     }
 
     /** Menu preview: 1 = tier 1, 2 = tier 2, 3 = tier 3, 4 = tier 3 maximum (Radioactive Vial). Labelled PREVIEW. */
@@ -97,17 +133,17 @@ public final class Cinematic {
         Reward r = switch (mode) {
             case 1 -> Reward.SILVER_MAGMAFISH;
             case 2 -> Reward.MAGMA_LORD_FRAGMENT;
-            case 3 -> Reward.CARMINE_DYE;
-            default -> Reward.RADIOACTIVE_VIAL;
+            case 3 -> Reward.RADIOACTIVE_VIAL;
+            default -> Reward.CARMINE_DYE;
         };
-        QUEUE.clear();
-        current = null;
-        enqueue(r, List.of(), false, true);
+        enqueue(r, List.of(), false, true, null);   // joins the end of the queue: never interrupts a running reveal
     }
 
     public static void reset() {
         QUEUE.clear();
         current = null;
+        gapUntilNs = 0;
+        hiddenSinceNs = 0;
     }
 
     // ------------------------------------------------------------------
@@ -120,31 +156,52 @@ public final class Cinematic {
             return;
         }
         if (current == null) {
+            if (System.nanoTime() < gapUntilNs) return;
             Req r = QUEUE.poll();
             if (r == null) return;
-            current = start(r);
+            try {
+                current = start(r, QUEUE.size() >= FAST_BACKLOG);
+            } catch (Throwable ex) {
+                current = null;                        // a broken reveal must never block the ones behind it
+                KillTracker.debug("A reveal failed to start (" + ex + "), skipped.");
+                return;
+            }
         }
         Playback p = current;
         float t = p.t();
-        while (p.nextCue < p.cues.size() && p.cues.get(p.nextCue).t() <= t) p.cues.get(p.nextCue++).action().run();
-        if (t >= p.tl.total()) current = null;
+        while (p.nextCue < p.cues.size() && p.cues.get(p.nextCue).t() <= t) {
+            Cue c = p.cues.get(p.nextCue++);
+            try {
+                c.action().run();
+            } catch (Throwable ignored) {
+                // a sound failing must not stop the animation
+            }
+        }
+        if (t >= p.tl.total()) {
+            current = null;
+            gapUntilNs = System.nanoTime() + GAP_NS;
+        }
     }
 
     private static Tl timeline(int tier, boolean vial) {
+        // Higher tiers replay the earlier stages with a pause in between (like a ball shaking before it clicks shut).
         return switch (tier) {
-            case 1 -> new Tl(0.35f, 1.15f, 2.25f, 3.1f, 6.2f);
-            case 2 -> new Tl(0.4f, 2.3f, 2.9f, 3.9f, 7.8f);
-            default -> vial ? new Tl(0.4f, 3.4f, 4.1f, 5.6f, 11.7f) : new Tl(0.4f, 3.4f, 4.1f, 5.4f, 10.7f);
+            case 1 -> new Tl(new float[]{0.35f}, new float[]{1.15f}, 2.25f, 3.1f, 6.2f);
+            case 2 -> new Tl(new float[]{0.35f, 2.3f}, new float[]{1.1f, 4.0f}, 4.6f, 5.6f, 9.6f);
+            default -> vial
+                    ? new Tl(new float[]{0.35f, 2.2f, 4.0f}, new float[]{1.1f, 3.3f, 6.2f}, 6.9f, 8.5f, 13.4f)
+                    : new Tl(new float[]{0.35f, 2.2f, 4.0f}, new float[]{1.1f, 3.3f, 6.2f}, 6.9f, 8.3f, 12.4f);
         };
     }
 
-    private static Playback start(Req r) {
+    private static Playback start(Req r, boolean fast) {
         Icons.refresh();
         boolean vial = r.reward().maxIntensity();
-        Playback p = new Playback(r, timeline(r.reward().tier, vial), JawbusConfig.get().duration);
+        // with a backlog the reveal is shortened (never skipped) and uses fewer particles and sounds
+        Playback p = new Playback(r, timeline(r.reward().tier, vial), JawbusConfig.get().duration * (fast ? 0.6f : 1f), fast);
         p.icon = Icons.get(r.reward());
         try {
-            G3.begin(p.tier, vial, p.seed, p.tl.cs(), p.tl.ce(), p.tl.burst());
+            G3.begin(p.tier, vial, p.seed, dbl(p.tl.cs()), dbl(p.tl.ce()), p.tl.burst());
             p.chest = G3.chestAt(p.tl.burst());
         } catch (Throwable ex) {
             p.g3ok = false;
@@ -152,6 +209,15 @@ public final class Cinematic {
         }
         buildCues(p.cues, p.tier, vial, p.tl);
         p.cues.sort(Comparator.comparingDouble(Cue::t));
+        if (fast) {                                    // thin out the audio, keep the big moment
+            List<Cue> keep = new ArrayList<>();
+            for (int i = 0; i < p.cues.size(); i++) {
+                Cue c = p.cues.get(i);
+                if (i % 2 == 0 || Math.abs(c.t() - p.tl.burst()) < 0.06f) keep.add(c);
+            }
+            p.cues.clear();
+            p.cues.addAll(keep);
+        }
         return p;
     }
 
@@ -184,49 +250,60 @@ public final class Cinematic {
         Object bell = SoundEvents.NOTE_BLOCK_BELL;
         Object orb = SoundEvents.EXPERIENCE_ORB_PICKUP;
         Object twinkle = SoundEvents.FIREWORK_ROCKET_TWINKLE;
+        float cs1 = tl.cs()[0], ce1 = tl.ce()[0];
 
-        if (tier == 1) {                                   // subdued: short, quiet
-            c.add(reg(tl.cs(), bass, 1.4f, 0.35f));
-            c.add(reg(tl.cs() + 0.3f, bass, 1.2f, 0.30f));
-            c.add(reg(1.2f, bass, 0.8f, 0.35f));
-            c.add(reg(1.5f, bass, 0.7f, 0.35f));
-            c.add(reg(1.9f, bass, 0.6f, 0.30f));
+        // stage 1 (every tier): first crack, twitch, stagger - subdued
+        c.add(reg(cs1, bass, 1.4f, 0.35f));
+        c.add(reg(cs1 + 0.3f, bass, 1.2f, 0.30f));
+        c.add(reg(ce1 + 0.05f, bass, 0.8f, 0.35f));
+        c.add(reg(ce1 + 0.35f, bass, 0.7f, 0.35f));
+        if (tier == 1) {                                   // the flop
+            c.add(reg(ce1 + 0.75f, bass, 0.6f, 0.30f));
             c.add(reg(tl.burst(), land, 0.6f, 0.5f));
             c.add(reg(tl.burst(), boom, 1.6f, 0.15f));
             c.add(reg(tl.burst() + 0.25f, chime, 1.2f, 0.35f));
-        } else if (tier == 2) {                            // rising rumble, then a stronger impact
-            for (float x = tl.cs(); x < tl.ce(); x += 0.22f) {
-                float u = (x - tl.cs()) / (tl.ce() - tl.cs());
-                c.add(reg(x, bass, 0.5f + 0.6f * u, 0.25f + 0.6f * u));
-            }
-            c.add(reg(tl.ce(), land, 0.5f, 0.4f));
+            return;
+        }
+        c.add(reg(ce1 + 0.65f, bass, 0.6f, 0.30f));        // rocks forward, then holds (silence in the pause)
+
+        float cs2 = tl.cs()[1], ce2 = tl.ce()[1];
+        for (float x = cs2; x < ce2; x += 0.22f) {         // stage 2: rising rumble
+            float u = (x - cs2) / (ce2 - cs2);
+            c.add(reg(x, bass, 0.5f + 0.6f * u, 0.25f + 0.6f * u));
+        }
+        if (tier == 2) {                                   // the rupture
+            c.add(reg(ce2, land, 0.5f, 0.4f));
             c.add(reg(tl.burst(), boom, 0.8f, 0.8f));
             c.add(reg(tl.burst(), land, 0.5f, 0.7f));
             c.add(reg(tl.burst() + 0.25f, chime, 1.0f, 0.5f));
             c.add(reg(tl.burst() + 0.30f, blast, 1.2f, 0.3f));
-        } else {                                           // tier 3: build, heartbeat, SILENT pause, then jackpot
-            for (float x = tl.cs(); x < tl.ce(); x += 0.2f) {
-                float u = (x - tl.cs()) / (tl.ce() - tl.cs());
-                c.add(reg(x, bass, 0.4f + 0.8f * u, 0.3f + 0.7f * u));
-            }
-            for (float d : new float[]{0.9f, 0.6f, 0.35f, 0.15f}) {
-                c.add(reg(tl.ce() - d, bass, 0.5f, 0.8f));
-                c.add(reg(tl.ce() - d + 0.09f, bass, 0.45f, 0.6f));
-            }
-            c.add(jack(tl.burst(), boom, 0.5f, 1.0f));
-            c.add(jack(tl.burst(), land, 0.5f, 1.0f));
-            c.add(jack(tl.burst(), bass, 0.35f, 1.0f));
-            c.add(jack(tl.burst() + 0.15f, level, 1.0f, 1.0f));
-            c.add(jack(tl.burst() + 0.20f, blast, 1.0f, 0.8f));
-            float[] arp = {0.84f, 1.0f, 1.26f, 1.5f, 1.68f, 2.0f};
-            for (int i = 0; i < arp.length; i++) c.add(jack(tl.burst() + 0.3f + i * 0.09f, bell, arp[i], 0.7f));
-            for (int i = 0; i < 8; i++) c.add(jack(tl.burst() + 0.5f + i * 0.06f, orb, 0.8f + 0.1f * i, 0.5f));
-            if (vial) {                                    // maximum intensity: extra boom, second fanfare, more chimes
-                c.add(jack(tl.burst() + 0.25f, boom, 0.4f, 1.0f));
-                c.add(jack(tl.burst() + 0.9f, level, 1.26f, 1.0f));
-                for (int i = 0; i < 8; i++) c.add(jack(tl.burst() + 0.9f + i * 0.07f, bell, 1.0f + 0.14f * i, 0.7f));
-                for (int i = 0; i < 6; i++) c.add(jack(tl.burst() + 1.1f + i * 0.08f, twinkle, 1.0f + 0.1f * i, 0.6f));
-            }
+            return;
+        }
+        c.add(reg(ce2, land, 0.5f, 0.5f));                 // tier 3: stage 2 ends with a thump, then a pause
+        c.add(reg(ce2 + 0.05f, bass, 0.4f, 0.6f));
+
+        float cs3 = tl.cs()[2], ce3 = tl.ce()[2];          // stage 3: build, heartbeat, SILENT pause, then jackpot
+        for (float x = cs3; x < ce3; x += 0.2f) {
+            float u = (x - cs3) / (ce3 - cs3);
+            c.add(reg(x, bass, 0.4f + 0.8f * u, 0.3f + 0.7f * u));
+        }
+        for (float d : new float[]{0.9f, 0.6f, 0.35f, 0.15f}) {
+            c.add(reg(ce3 - d, bass, 0.5f, 0.8f));
+            c.add(reg(ce3 - d + 0.09f, bass, 0.45f, 0.6f));
+        }
+        c.add(jack(tl.burst(), boom, 0.5f, 1.0f));
+        c.add(jack(tl.burst(), land, 0.5f, 1.0f));
+        c.add(jack(tl.burst(), bass, 0.35f, 1.0f));
+        c.add(jack(tl.burst() + 0.15f, level, 1.0f, 1.0f));
+        c.add(jack(tl.burst() + 0.20f, blast, 1.0f, 0.8f));
+        float[] arp = {0.84f, 1.0f, 1.26f, 1.5f, 1.68f, 2.0f};
+        for (int i = 0; i < arp.length; i++) c.add(jack(tl.burst() + 0.3f + i * 0.09f, bell, arp[i], 0.7f));
+        for (int i = 0; i < 8; i++) c.add(jack(tl.burst() + 0.5f + i * 0.06f, orb, 0.8f + 0.1f * i, 0.5f));
+        if (vial) {                                        // maximum intensity: extra boom, second fanfare, more chimes
+            c.add(jack(tl.burst() + 0.25f, boom, 0.4f, 1.0f));
+            c.add(jack(tl.burst() + 0.9f, level, 1.26f, 1.0f));
+            for (int i = 0; i < 8; i++) c.add(jack(tl.burst() + 0.9f + i * 0.07f, bell, 1.0f + 0.14f * i, 0.7f));
+            for (int i = 0; i < 6; i++) c.add(jack(tl.burst() + 1.1f + i * 0.08f, twinkle, 1.0f + 0.1f * i, 0.6f));
         }
     }
 
@@ -238,21 +315,31 @@ public final class Cinematic {
         float t = p.t();
         Tl tl = p.tl;
         float tau = t - tl.burst();
+        float ce1 = tl.ce()[0];
         float a = 0f;
+        if (p.tier >= 2 && t >= ce1 && t < ce1 + 0.3f) a = 0.12f * (1f - (t - ce1) / 0.3f);   // the first twitch
         if (p.tier == 1) {
             if (tau >= 0f && tau < 0.6f) a = 0.30f * (1f - tau / 0.6f) * (1f - tau / 0.6f);
         } else if (p.tier == 2) {
-            if (t >= tl.cs() && t < tl.burst()) {
-                float u = (t - tl.cs()) / (tl.burst() - tl.cs());
+            float cs2 = tl.cs()[1];
+            if (t >= cs2 && t < tl.burst()) {
+                float u = (t - cs2) / (tl.burst() - cs2);
                 a = 0.10f + 0.35f * u * u;
             } else if (tau >= 0f && tau < 1.6f) {
                 a = 1.3f * (float) Math.exp(-tau * 2.6f);
             }
         } else {
-            if (t >= tl.cs() && t < tl.ce()) {
-                float u = (t - tl.cs()) / (tl.ce() - tl.cs());
+            float cs2 = tl.cs()[1], ce2 = tl.ce()[1], cs3 = tl.cs()[2], ce3 = tl.ce()[2];
+            if (t >= cs2 && t < ce2) {
+                float u = (t - cs2) / (ce2 - cs2);
+                a = 0.10f + 0.30f * u * u;
+            } else if (t >= ce2 && t < ce2 + 0.6f) {
+                a = 0.45f * (float) Math.exp(-(t - ce2) * 8f);
+            }
+            if (t >= cs3 && t < ce3) {
+                float u = (t - cs3) / (ce3 - cs3);
                 a = 0.15f + 0.7f * u * u;
-            } else if (t >= tl.ce() && t < tl.burst()) {
+            } else if (t >= ce3 && t < tl.burst()) {
                 a = 0.12f;
             } else if (tau >= 0f && tau < 2.2f) {
                 a = 3.2f * (float) Math.exp(-tau * 1.9f);
@@ -331,6 +418,15 @@ public final class Cinematic {
     // ------------------------------------------------------------------
 
     public static void render(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
+        try {
+            renderInner(g);
+        } catch (Throwable ex) {
+            current = null;                            // drop the broken reveal so the queue and the chat recover
+            KillTracker.debug("Drawing a reveal failed (" + ex + "), skipped.");
+        }
+    }
+
+    private static void renderInner(GuiGraphicsExtractor g) {
         Playback p = current;
         if (p == null) return;
         JawbusConfig cfg = JawbusConfig.get();
@@ -345,11 +441,12 @@ public final class Cinematic {
 
         int w = g.guiWidth();
         int h = g.guiHeight();
-        int cx = w / 2;
+        int cx = w / 2 + Math.round(cfg.offsetX * w);                 // the animation can be dragged elsewhere
+        int oyShift = Math.round(cfg.offsetY * h);
         int cell = Math.max(1, Math.round(h * 0.0105f * cfg.scale)); // scales with resolution and GUI scale
         float sf = h * 0.80f * cfg.scale / Golem3D.FH;               // 3D framebuffer pixel -> GUI pixel
         float fox = cx - Golem3D.FW * sf / 2f;
-        float foy = h * 0.50f - Golem3D.FH * 0.52f * sf;
+        float foy = h * 0.50f + oyShift - Golem3D.FH * 0.52f * sf;
         float chestX = fox + p.chest[0] * sf;
         int chestY = Math.round(foy + p.chest[1] * sf);
         boolean vial = p.reward.maxIntensity();
@@ -363,10 +460,7 @@ public final class Cinematic {
             try {
                 G3.draw(t);
                 G3.buildRects((tier == 1 && t > tl.itemDone()) ? a * 0.6f : a);
-                for (int i = 0; i < G3.rectCount; i++) {
-                    g.fill(Math.round(fox + G3.rx0[i] * sf), Math.round(foy + G3.ry0[i] * sf),
-                            Math.round(fox + G3.rx1[i] * sf), Math.round(foy + G3.ry1[i] * sf), G3.rc[i]);
-                }
+                paintRects(g, G3, fox, foy, sf);
             } catch (Throwable ex) {
                 p.g3ok = false; // fall back to effects + reward only
                 KillTracker.debug("3D golem failed (" + ex + "), continuing without it.");
@@ -388,7 +482,7 @@ public final class Cinematic {
             float k = Math.max(0.7f, cfg.scale);
             float px = h * (tier == 1 ? 0.17f : tier == 2 ? 0.21f : 0.25f) * (vial ? 1.2f : 1f) * k;
             float arc = h * (tier == 1 ? 0.05f : tier == 2 ? 0.09f : 0.13f);
-            float y1 = h * 0.38f;
+            float y1 = h * 0.38f + oyShift;
             float iy = chestY + (y1 - chestY) * easeOut(u) - (float) Math.sin(u * Math.PI) * arc;
             int rx = Math.round(cx + (chestX - cx) * (1f - easeOut(u)));
             if (u >= 1f) iy += (float) Math.sin((t - tl.itemDone()) * 3f) * cell * 0.8f;
@@ -424,7 +518,60 @@ public final class Cinematic {
             }
         }
 
-        if (p.preview) centered(g, font, "PREVIEW  (tier " + tier + (vial ? ", max" : "") + ")", cx, 8, 1.2f, argb(0xFFFFFF, a * 0.8f));
+        int topY = 8;
+        if (p.preview) {
+            centered(g, font, "PREVIEW  (tier " + tier + (vial ? ", max" : "") + ")", cx, topY, 1.2f, argb(0xFFFFFF, a * 0.8f));
+            topY += 12;
+        }
+        if (p.tag != null) centered(g, font, p.tag, cx, topY, 1.2f, argb(0xFFCC66, a * 0.8f));
+        if (QUEUE.size() > 0) centered(g, font, "+" + QUEUE.size() + " more", cx, topY + 12, 1.1f, argb(0xAAAAAA, a * 0.7f));
+    }
+
+    private static void paintRects(GuiGraphicsExtractor g, Golem3D gg, float fox, float foy, float sf) {
+        for (int i = 0; i < gg.rectCount; i++) {
+            g.fill(Math.round(fox + gg.rx0[i] * sf), Math.round(foy + gg.ry0[i] * sf),
+                    Math.round(fox + gg.rx1[i] * sf), Math.round(foy + gg.ry1[i] * sf), gg.rc[i]);
+        }
+    }
+
+    private static Golem3D editorG3;
+
+    /** A standing golem at the current animation position, drawn by the "Move animation" screen. */
+    public static void renderEditor(GuiGraphicsExtractor g) {
+        JawbusConfig cfg = JawbusConfig.get();
+        int w = g.guiWidth();
+        int h = g.guiHeight();
+        int cx = w / 2 + Math.round(cfg.offsetX * w);
+        float sf = h * 0.80f * cfg.scale / Golem3D.FH;
+        float fox = cx - Golem3D.FW * sf / 2f;
+        float foy = h * 0.50f + Math.round(cfg.offsetY * h) - Golem3D.FH * 0.52f * sf;
+        try {
+            if (editorG3 == null) {
+                editorG3 = new Golem3D();
+                editorG3.begin(2, false, 7L, new double[]{0.35, 2.3}, new double[]{1.1, 4.0}, 4.6);
+            }
+            editorG3.draw(1.8);
+            editorG3.buildRects(0.9f);
+            paintRects(g, editorG3, fox, foy, sf);
+        } catch (Throwable ignored) {
+            // no preview golem: the frame below still shows where the animation will be
+        }
+        frame(g, Math.round(fox + Golem3D.FW * sf * 0.10f), Math.round(foy + 8 * sf),
+                Math.round(fox + Golem3D.FW * sf * 0.90f), Math.round(foy + (Golem3D.FH - 4) * sf), 1, 0xCCFFAA00);
+    }
+
+    /** True while the chat should stay hidden so the reward is not given away early. */
+    public static boolean chatHidden() {
+        JawbusConfig c = JawbusConfig.get();
+        boolean want = c.enabled && c.hideChat
+                && (current != null || !QUEUE.isEmpty() || System.nanoTime() < gapUntilNs || KillTracker.spoilerWindowOpen());
+        if (!want) {
+            hiddenSinceNs = 0;
+            return false;
+        }
+        long now = System.nanoTime();
+        if (hiddenSinceNs == 0) hiddenSinceNs = now;
+        return now - hiddenSinceNs < 120_000_000_000L;   // safety net: never hide the chat for more than 2 minutes
     }
 
     // ---- explosion particles (sparks and smoke; the debris itself is 3D, drawn by Golem3D) ----
@@ -436,6 +583,7 @@ public final class Cinematic {
         boolean vial = p.reward.maxIntensity();
         float k = vial ? 1.4f : 1f;
 
+        if (p.fast) k *= 0.5f;
         int sparks = Math.round((tier == 1 ? 28 : tier == 2 ? 110 : 300) * k);
         float sx0 = ox;
         float sy0 = oy;
