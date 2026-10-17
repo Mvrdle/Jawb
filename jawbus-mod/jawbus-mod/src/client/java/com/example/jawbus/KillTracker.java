@@ -187,25 +187,18 @@ final class KillTracker {
     }
 
     /**
-     * Reveal policy for one kill that found several rewards: every reward of tier 2 or 3 gets its own full animation,
-     * lowest priority first so the best one comes last; a tier-1 reward (Silver Magmafish) that came with a better one
-     * is listed under "Also:" on the last reveal. Nothing is discarded.
+     * Reveal policy for one kill that found several rewards: the best one gets the full animation, and every other
+     * reward is listed under "Also:" on that reveal. (Magma Lord Fragment and Silver Magmafish are guaranteed drops,
+     * so animating each reward separately would double every reveal.) Nothing is discarded.
      */
     private static void revealKill(KillLedger.Result r) {
-        List<Reward> big = new ArrayList<>();
-        List<Reward> small = new ArrayList<>();
-        for (Reward x : r.rewards()) (x.tier >= 2 ? big : small).add(x);
-        big.sort(Comparator.comparingInt(x -> x.priority));
+        Reward best = Reward.best(r.rewards());
+        List<Reward> others = new ArrayList<>(r.rewards());
+        others.remove(best);
+        others.sort(Comparator.comparingInt((Reward x) -> x.priority).reversed());
         String tag = r.concurrent() ? "KILL " + r.killNumber() + (r.ambiguous() ? "  (reward match is a best guess)" : "") : null;
         if (r.sim()) tag = "SIMULATED" + (tag == null ? "" : "  " + tag);
-        if (big.isEmpty()) {
-            for (Reward x : small) Cinematic.enqueue(x, List.of(), false, r.sim(), tag);
-        } else {
-            for (int i = 0; i < big.size(); i++) {
-                boolean last = i == big.size() - 1;
-                Cinematic.enqueue(big.get(i), last ? small : List.of(), false, r.sim(), tag);
-            }
-        }
+        Cinematic.enqueue(best, others, false, r.sim(), tag);
         StringBuilder sb = new StringBuilder("Kill " + r.killNumber() + ":");
         for (Reward x : r.rewards()) sb.append(' ').append(x.displayName).append(" (tier ").append(x.tier).append(')');
         if (r.ambiguous()) sb.append(" [several kills were open, so which kill got it is a best guess]");
