@@ -60,6 +60,8 @@ public final class Cinematic {
         int nextCue;
         List<Particle> parts;
         ItemStack icon;
+        float[] chest = {Golem3D.FW / 2f, Golem3D.FH * 0.5f};
+        boolean g3ok = true;
 
         Playback(Req r, Tl tl, float dur) {
             this.reward = r.reward();
@@ -77,6 +79,7 @@ public final class Cinematic {
         }
     }
 
+    private static final Golem3D G3 = new Golem3D();
     private static final ArrayDeque<Req> QUEUE = new ArrayDeque<>();
     private static Playback current;
 
@@ -140,6 +143,13 @@ public final class Cinematic {
         boolean vial = r.reward().maxIntensity();
         Playback p = new Playback(r, timeline(r.reward().tier, vial), JawbusConfig.get().duration);
         p.icon = Icons.get(r.reward());
+        try {
+            G3.begin(p.tier, vial, p.seed, p.tl.cs(), p.tl.ce(), p.tl.burst());
+            p.chest = G3.chestAt(p.tl.burst());
+        } catch (Throwable ex) {
+            p.g3ok = false;
+            KillTracker.debug("3D golem could not start (" + ex + "), continuing without it.");
+        }
         buildCues(p.cues, p.tier, vial, p.tl);
         p.cues.sort(Comparator.comparingDouble(Cue::t));
         return p;
@@ -337,72 +347,37 @@ public final class Cinematic {
         int h = g.guiHeight();
         int cx = w / 2;
         int cell = Math.max(1, Math.round(h * 0.0105f * cfg.scale)); // scales with resolution and GUI scale
-        int ground = Math.round(h * 0.72f);
-        int chestY = ground - Math.round(GolemSprite.H * cell * 0.55f);
+        float sf = h * 0.80f * cfg.scale / Golem3D.FH;               // 3D framebuffer pixel -> GUI pixel
+        float fox = cx - Golem3D.FW * sf / 2f;
+        float foy = h * 0.50f - Golem3D.FH * 0.52f * sf;
+        float chestX = fox + p.chest[0] * sf;
+        int chestY = Math.round(foy + p.chest[1] * sf);
         boolean vial = p.reward.maxIntensity();
 
         // soft dim behind everything (never fully opaque, and it fades out with the animation)
         float[] dim = {0.22f, 0.32f, 0.42f};
         g.fill(0, 0, w, h, argb(0x000000, a * dim[tier - 1]));
 
-        // ---- golem pose ----
-        float growth = ease(clamp01((t - tl.cs()) / (tl.ce() - tl.cs())));
-        float heat = 0f, sx = 1f, sy = 1f, rot = 0f, amp = 0f;
-        float oy = (1f - ease(clamp01(t / 0.4f))) * cell * 6f;
-        switch (tier) {
-            case 1 -> {
-                heat = 0.25f * growth;
-                float s = t - 1.15f;
-                if (s > 0f && s < 0.7f) rot = (float) Math.sin(s * 16f) * 0.09f * (1f - s / 0.7f); // stagger
-                float u = clamp01((t - 1.85f) / (tl.burst() - 1.85f));
-                if (u > 0f) {                                                                      // flop forward
-                    sy = (float) Math.cos(u * u * 1.35f);
-                    sx = 1f + 0.12f * u;
+        // ---- the 3D golem (software-rendered, painted as merged rectangles) ----
+        if (p.g3ok) {
+            try {
+                G3.draw(t);
+                G3.buildRects((tier == 1 && t > tl.itemDone()) ? a * 0.6f : a);
+                for (int i = 0; i < G3.rectCount; i++) {
+                    g.fill(Math.round(fox + G3.rx0[i] * sf), Math.round(foy + G3.ry0[i] * sf),
+                            Math.round(fox + G3.rx1[i] * sf), Math.round(foy + G3.ry1[i] * sf), G3.rc[i]);
                 }
-                if (t >= tl.burst()) {
-                    float tau = t - tl.burst();
-                    sy = 0.22f + 0.05f * (float) (Math.exp(-tau * 9f) * Math.abs(Math.sin(tau * 18f)));
-                    sx = 1.12f;
-                    heat = 0.25f * Math.max(0f, 1f - tau / 1.5f);
-                }
+            } catch (Throwable ex) {
+                p.g3ok = false; // fall back to effects + reward only
+                KillTracker.debug("3D golem failed (" + ex + "), continuing without it.");
             }
-            case 2 -> {
-                if (t < tl.ce()) {
-                    heat = 0.15f + 0.7f * growth * growth;
-                    amp = cell * 0.7f * growth;
-                } else {                                                                           // buckle
-                    float u = ease(clamp01((t - tl.ce()) / (tl.burst() - tl.ce())));
-                    heat = 0.85f + 0.15f * u;
-                    sy = 1f - 0.20f * u;
-                    sx = 1f + 0.10f * u;
-                    amp = cell * (0.8f + 1.2f * u);
-                }
-            }
-            default -> {
-                if (t < tl.ce()) {
-                    heat = 0.1f + 0.9f * (float) Math.pow(growth, 1.7);
-                    amp = cell * (0.2f + 1.5f * growth);
-                } else {                                                                           // dramatic pause
-                    heat = 1f;
-                    float pul = 1f + 0.015f * (float) Math.sin(t * 25f);
-                    sx = pul;
-                    sy = pul;
-                }
-            }
-        }
-        float jx = (float) Math.sin(t * 83f) * amp;
-        float jy = (float) Math.cos(t * 97f) * amp * 0.6f;
-
-        if (tier == 1 || t < tl.burst()) {
-            float ga = (tier == 1 && t > tl.itemDone()) ? a * 0.6f : a;
-            drawGolem(g, cell, cx, ground, sx, sy, rot, jx, jy + oy, heat, growth, GolemSprite.cracks(tier), ga, tier, t);
         }
 
         // ---- burst / impact ----
         float tau = t - tl.burst();
         if (tau >= 0f) {
-            if (p.parts == null) p.parts = spawn(p, cell, cx, ground, h, tier == 2 ? 1.10f : 1f, tier == 2 ? 0.80f : 1f);
-            effects(g, p, tau, cx, chestY, w, h, a);
+            if (p.parts == null) p.parts = spawn(p, cell, Math.round(chestX), chestY, h);
+            effects(g, p, tau, Math.round(chestX), chestY, w, h, a);
             drawParticles(g, p, t, a);
         }
 
@@ -415,6 +390,7 @@ public final class Cinematic {
             float arc = h * (tier == 1 ? 0.05f : tier == 2 ? 0.09f : 0.13f);
             float y1 = h * 0.38f;
             float iy = chestY + (y1 - chestY) * easeOut(u) - (float) Math.sin(u * Math.PI) * arc;
+            int rx = Math.round(cx + (chestX - cx) * (1f - easeOut(u)));
             if (u >= 1f) iy += (float) Math.sin((t - tl.itemDone()) * 3f) * cell * 0.8f;
             float sIcon = px / 16f * Math.max(0.01f, easeOutBack(u));
             int rc = p.reward.rarity.rgb;
@@ -423,12 +399,14 @@ public final class Cinematic {
             float pulse = 0.5f + 0.5f * (float) Math.sin(t * 5f);
             for (int n = 0; n < 3; n++) {
                 int half = Math.round(px * (0.62f + 0.10f * n) + pulse * cell);
-                int x0 = cx - half, y0 = Math.round(iy) - half;
-                g.fill(x0, y0, cx + half, Math.round(iy) + half, argb(rc, a * u * (0.10f - n * 0.025f)));
-                frame(g, x0, y0, cx + half, Math.round(iy) + half, Math.max(1, cell / 2), argb(rc, a * u * (0.55f - n * 0.17f)));
+                int x0 = rx - half, y0 = Math.round(iy) - half;
+                g.fill(x0, y0, rx + half, Math.round(iy) + half, argb(rc, a * u * (0.10f - n * 0.025f)));
+                frame(g, x0, y0, rx + half, Math.round(iy) + half, Math.max(1, cell / 2), argb(rc, a * u * (0.55f - n * 0.17f)));
             }
-            if (tier == 3 && u > 0.3f) sparkles(g, cx, Math.round(iy), px, cell, rc, t, a * u, vial ? 18 : 12);
-            drawIcon(g, p.icon, cx, Math.round(iy), sIcon);
+            if (tier == 3 && u > 0.3f) sparkles(g, rx, Math.round(iy), px, cell, rc, t, a * u, vial ? 18 : 12);
+            // tier 3: the reward turns slowly (a flat item icon, so it turns like a coin)
+            float xs = tier == 3 ? Math.max(0.3f, Math.abs((float) Math.cos((t - is) * 1.5f))) : 1f;
+            drawIcon(g, p.icon, rx, Math.round(iy), sIcon, xs);
 
             // name + rarity (once the reward has mostly arrived)
             float ta = clamp01((u - 0.55f) / 0.3f) * a;
@@ -449,83 +427,18 @@ public final class Cinematic {
         if (p.preview) centered(g, font, "PREVIEW  (tier " + tier + (vial ? ", max" : "") + ")", cx, 8, 1.2f, argb(0xFFFFFF, a * 0.8f));
     }
 
-    // ---- golem ----
+    // ---- explosion particles (sparks and smoke; the debris itself is 3D, drawn by Golem3D) ----
 
-    private static int cellColor(GolemSprite s, int i, float[] cr, float growth, float heat, int tier, float t) {
-        if (s.eye[i]) return mix(0xE0701A, 0xFFFFFF, heat);
-        if (cr[i] >= 0f && cr[i] <= growth) {
-            float flick = 0.92f + 0.08f * (float) Math.sin(t * 30f + i);
-            int c = tier == 3 ? mix(0xFF6A00, 0xFFFFFF, (float) Math.pow(heat, 1.5)) : mix(0xFF4A00, 0xFFB030, heat);
-            return scale(c, flick);
-        }
-        int c = mix(s.color[i], 0xFF4A10, heat * (tier == 3 ? 0.35f : 0.22f));
-        if (tier == 3 && heat > 0.75f) c = mix(c, 0xFFF2D0, (heat - 0.75f) / 0.25f * 0.85f);
-        return c;
-    }
-
-    private static void drawGolem(GuiGraphicsExtractor g, int cell, int feetX, int ground, float sx, float sy, float rot,
-                                  float ox, float oy, float heat, float growth, float[] cr, float a, int tier, float t) {
-        GolemSprite s = GolemSprite.get();
-        int gw = GolemSprite.W * cell;
-        var m = g.pose();
-        m.pushMatrix();
-        m.translate(feetX + ox, ground + oy);
-        m.rotate(rot);
-        m.scale(sx, sy);
-        m.translate(-gw / 2f, -(float) (GolemSprite.H * cell));
-        if (heat > 0.2f) { // glow bleeding past the silhouette
-            for (int k = 1; k <= 3; k++) {
-                int pad = cell * k * 2;
-                g.fill(-pad, cell * 8 - pad, gw + pad, cell * 22 + pad, argb(0xFF5A10, a * heat * 0.09f));
-            }
-        }
-        for (int y = 0; y < GolemSprite.H; y++) {
-            for (int x = 0; x < GolemSprite.W; x++) {
-                int i = y * GolemSprite.W + x;
-                if (!s.filled[i]) continue;
-                g.fill(x * cell, y * cell, (x + 1) * cell, (y + 1) * cell, argb(cellColor(s, i, cr, growth, heat, tier, t), a));
-            }
-        }
-        m.popMatrix();
-    }
-
-    // ---- explosion particles (debris = the golem's own cells) ----
-
-    private static List<Particle> spawn(Playback p, int cell, int cx, int ground, int h, float sx, float sy) {
+    private static List<Particle> spawn(Playback p, int cell, int ox, int oy, int h) {
         Random r = new Random(p.seed);
         List<Particle> out = new ArrayList<>();
-        GolemSprite s = GolemSprite.get();
         int tier = p.tier;
         boolean vial = p.reward.maxIntensity();
         float k = vial ? 1.4f : 1f;
-        float ox = cx;
-        float oy = ground - GolemSprite.H * cell * 0.55f;
-
-        if (tier >= 2) {
-            float frac = tier == 2 ? 0.45f : 0.85f;
-            float speed = h * (tier == 2 ? 0.42f : 0.70f) * (vial ? 1.2f : 1f);
-            float life = tier == 2 ? 1.8f : 2.4f;
-            float[] cr = GolemSprite.cracks(tier);
-            for (int y = 0; y < GolemSprite.H; y++) {
-                for (int x = 0; x < GolemSprite.W; x++) {
-                    int i = y * GolemSprite.W + x;
-                    if (!s.filled[i] || r.nextFloat() > frac) continue;
-                    float px = cx + (x + 0.5f - GolemSprite.W / 2f) * cell * sx;
-                    float py = ground + (y + 0.5f - GolemSprite.H) * cell * sy;
-                    float dx = px - ox, dy = py - oy;
-                    float len = (float) Math.hypot(dx, dy) + 1f;
-                    float sp = speed * (0.5f + r.nextFloat());
-                    float vx = dx / len * sp + (r.nextFloat() - 0.5f) * speed * 0.2f;
-                    float vy = dy / len * sp - speed * 0.35f * r.nextFloat();
-                    int rgb = cr[i] >= 0f ? 0xFF8A20 : mix(s.color[i], 0xFF6A20, 0.35f);
-                    out.add(new Particle(0, px, py, vx, vy, h * 1.25f, life * (0.7f + 0.3f * r.nextFloat()), rgb, cell, 0f));
-                }
-            }
-        }
 
         int sparks = Math.round((tier == 1 ? 28 : tier == 2 ? 110 : 300) * k);
-        float sx0 = tier == 1 ? cx : ox;
-        float sy0 = tier == 1 ? ground - cell * 3f : oy;
+        float sx0 = ox;
+        float sy0 = oy;
         for (int n = 0; n < sparks; n++) {
             double ang = r.nextDouble() * Math.PI * 2;
             float sp = h * (tier == 1 ? 0.10f + 0.25f * r.nextFloat() : 0.25f + 0.90f * r.nextFloat());
@@ -559,11 +472,6 @@ public final class Cinematic {
             float alpha;
             int rgb = q.rgb();
             switch (q.kind()) {
-                case 0 -> {
-                    size = q.size();
-                    alpha = 1f - f * f * f;
-                    rgb = mix(rgb, 0x302018, f * 0.7f);
-                }
                 case 1 -> {
                     size = q.size() * (1f - 0.5f * f);
                     alpha = 1f - f;
@@ -644,11 +552,11 @@ public final class Cinematic {
 
     // ---- small draw helpers ----
 
-    private static void drawIcon(GuiGraphicsExtractor g, ItemStack stack, int cx, int cy, float scale) {
+    private static void drawIcon(GuiGraphicsExtractor g, ItemStack stack, int cx, int cy, float scale, float xs) {
         var m = g.pose();
         m.pushMatrix();
         m.translate(cx, cy);
-        m.scale(scale, scale);
+        m.scale(scale * xs, scale);
         m.translate(-8f, -8f);
         g.item(stack, 0, 0);
         m.popMatrix();
