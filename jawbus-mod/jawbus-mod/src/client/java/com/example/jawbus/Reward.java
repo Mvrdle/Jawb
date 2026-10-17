@@ -10,12 +10,13 @@ import java.util.Locale;
  * Rarities are the SkyBlock ones. Pure Java (no Minecraft classes) so it can be tested on its own.
  */
 public enum Reward {
-    SILVER_MAGMAFISH("Silver Magmafish", Rarity.EPIC, 1, 1, "silver magmafish"),
-    MAGMA_LORD_FRAGMENT("Magma Lord Fragment", Rarity.LEGENDARY, 2, 2, "magma lord fragment"),
-    LORD_JAWBUS_SHARD("Lord Jawbus Shard", Rarity.LEGENDARY, 2, 3, "lord jawbus shard"),
-    BOBBIN_SCRIPTURES("Bobbin' Scriptures", Rarity.RARE, 3, 4, "bobbin scriptures"),
-    CARMINE_DYE("Carmine Dye", Rarity.DIVINE, 3, 6, "carmine dye"),
-    RADIOACTIVE_VIAL("Radioactive Vial", Rarity.MYTHIC, 3, 5, "radioactive vial");
+    // chances (percent) are the base drop table from the wiki: normal kill / loot share; NaN = not listed there
+    SILVER_MAGMAFISH("Silver Magmafish", Rarity.EPIC, 1, 1, "silver magmafish", 100, 100),
+    MAGMA_LORD_FRAGMENT("Magma Lord Fragment", Rarity.LEGENDARY, 2, 2, "magma lord fragment", 100, 20),
+    LORD_JAWBUS_SHARD("Lord Jawbus Shard", Rarity.LEGENDARY, 2, 3, "lord jawbus shard", Double.NaN, Double.NaN),
+    BOBBIN_SCRIPTURES("Bobbin' Scriptures", Rarity.RARE, 3, 4, "bobbin scriptures", 4, Double.NaN),
+    CARMINE_DYE("Carmine Dye", Rarity.DIVINE, 3, 6, "carmine dye", 0.0004, Double.NaN),
+    RADIOACTIVE_VIAL("Radioactive Vial", Rarity.MYTHIC, 3, 5, "radioactive vial", 0.5, 0.06);
 
     public enum Rarity {
         EPIC("EPIC", 0xAA00AA),
@@ -40,13 +41,31 @@ public enum Reward {
     /** Higher wins when one kill drops several known rewards. */
     public final int priority;
     private final String key;
+    private final double killChance, shareChance;
 
-    Reward(String displayName, Rarity rarity, int tier, int priority, String key) {
+    Reward(String displayName, Rarity rarity, int tier, int priority, String key, double killChance, double shareChance) {
+        this.killChance = killChance;
+        this.shareChance = shareChance;
         this.displayName = displayName;
         this.rarity = rarity;
         this.tier = tier;
         this.priority = priority;
         this.key = key;
+    }
+
+    /** "0.5%  (1 in 200)" for the normal-kill or loot-share table, or null when the wiki table does not list it. */
+    public String chanceLabel(boolean lootShare) {
+        double p = lootShare ? shareChance : killChance;
+        if (Double.isNaN(p) || p <= 0) return null;
+        String pct = p >= 1 ? String.format(Locale.ROOT, "%.0f%%", p) : String.format(Locale.ROOT, "%s%%", trim(p));
+        if (p >= 100) return pct;
+        return pct + "  (1 in " + String.format(Locale.ROOT, "%,d", Math.round(100.0 / p)) + ")";
+    }
+
+    private static String trim(double p) {
+        String t = String.format(Locale.ROOT, "%.4f", p);
+        t = t.replaceAll("0+$", "");
+        return t.endsWith(".") ? t.substring(0, t.length() - 1) : t;
     }
 
     /** Carmine Dye (the rarest drop, DIVINE) gets the maximum version of tier 3. */
