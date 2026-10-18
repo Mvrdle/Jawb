@@ -1,0 +1,4 @@
+{
+  "enabled": true,
+  "webhook": "https://discord.com/api/webhooks/YOUR/URL"
+}
