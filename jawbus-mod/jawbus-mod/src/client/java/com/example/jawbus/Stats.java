@@ -17,7 +17,12 @@ import java.util.Map;
  * plate disappears near you, a drop when its chat line / inventory change was matched to a kill or to a loot share.
  */
 public final class Stats {
+    /** Kills the mod has seen itself since it was installed (or since the stats were reset). */
     public int kills;
+    /** Total shown in the SkyBlock Bestiary at the last sync, or -1 when never synced. */
+    public int syncedTotal = -1;
+    /** Value of {@link #kills} at the moment of that sync, so later kills add on top of the Bestiary number. */
+    public int killsAtSync;
     public int lootShares;
     /** Drops from your own kills, by Reward enum name. */
     public Map<String, Integer> drops = new LinkedHashMap<>();
@@ -90,6 +95,23 @@ public final class Stats {
             s.drops.merge(r.name(), 1, Integer::sum);
             s.since.put(r.name(), 0);
         }
+        save();
+    }
+
+    /** Bestiary total at the last sync plus every kill the mod has counted since; just the mod's own count if never synced. */
+    public int totalKills() {
+        return syncedTotal >= 0 ? syncedTotal + Math.max(0, kills - killsAtSync) : kills;
+    }
+
+    public boolean isSynced() {
+        return syncedTotal >= 0;
+    }
+
+    /** Sets the total to a number read from the Bestiary (or typed in). Later kills are added on top. */
+    public static void syncKills(int total) {
+        Stats s = instance;
+        s.syncedTotal = Math.max(0, total);
+        s.killsAtSync = s.kills;
         save();
     }
 
