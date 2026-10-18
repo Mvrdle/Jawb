@@ -43,6 +43,8 @@ public final class JawbusConfig {
     public float finalHold = 1.0f;
     /** How long the reward stays on screen after it lands. */
     public float rewardTime = 1.0f;
+    /** Animation detail: 0 = low (fastest), 1 = medium, 2 = high. Lower detail merges the golem's colours more coarsely. */
+    public int detail = 2;
     /** Chat lines explaining what the mod saw (useful while tuning). */
     public boolean debug = true;
 
@@ -93,6 +95,7 @@ public final class JawbusConfig {
         scale = c(scale, 0.5f, 1.5f);
         duration = c(duration, 0.6f, 2.0f);
         opacity = c(opacity, 0.2f, 1.0f);
+        detail = Math.max(0, Math.min(2, detail));
         buildSpeed = c(buildSpeed, 0.5f, 2.0f);
         pauseScale = c(pauseScale, 0.2f, 2.5f);
         finalHold = c(finalHold, 0.3f, 2.5f);
