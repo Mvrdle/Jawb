@@ -24,11 +24,11 @@ public final class JawbusConfigScreen extends Screen {
     protected void init() {
         JawbusConfig c = JawbusConfig.get();
         int colW = 150, gap = 8;
-        int step = Math.max(16, Math.min(22, (this.height - 50) / 9));
+        int step = Math.max(16, Math.min(22, (this.height - 50) / 10));
         int bh = step - 2;
         pw = colW * 2 + gap * 3;
-        ph = 24 + step * 8 + 8;
-        px = 10;
+        ph = 24 + step * 9 + 8;
+        px = Math.max(4, (this.width - pw) / 2);
         py = Math.max(4, (this.height - ph) / 2);
         int lx = px + gap, rx = px + gap * 2 + colW;
         int y = py + 22;
@@ -58,11 +58,17 @@ public final class JawbusConfigScreen extends Screen {
         this.addRenderableWidget(Button.builder(Component.literal("Move animation..."), b ->
                         net.minecraft.client.Minecraft.getInstance().gui.setScreen(new PositionScreen(this)))
                 .pos(lx, y + step * 6).size(colW, bh).build());
+        this.addRenderableWidget(Button.builder(Component.literal("Timings..."), b ->
+                        net.minecraft.client.Minecraft.getInstance().gui.setScreen(new TimingScreen(this)))
+                .pos(lx, y + step * 7).size(colW, bh).build());
+        this.addRenderableWidget(Button.builder(Component.literal("Stats..."), b ->
+                        net.minecraft.client.Minecraft.getInstance().gui.setScreen(new StatsScreen(this)))
+                .pos(lx, y + step * 8).size(colW, bh).build());
         this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-                .pos(rx, y + step * 7).size(colW, bh).build());
+                .pos(rx, y + step * 8).size(colW, bh).build());
     }
 
-    private void slider(int x, int y, int w, int h, String label, double min, double max, double cur, DoubleConsumer set) {
+    void slider(int x, int y, int w, int h, String label, double min, double max, double cur, DoubleConsumer set) {
         this.addRenderableWidget(new PercentSlider(x, y, w, h, label, min, max, cur, set));
     }
 
@@ -74,7 +80,10 @@ public final class JawbusConfigScreen extends Screen {
     }
 
     private void preview(int x, int y, int w, int h, String label, int mode) {
-        this.addRenderableWidget(Button.builder(Component.literal(label), b -> Cinematic.preview(mode))
+        this.addRenderableWidget(Button.builder(Component.literal(label), b -> {
+            this.onClose();
+            Cinematic.preview(mode);
+        })
                 .pos(x, y).size(w, h).build());
     }
 
@@ -108,7 +117,7 @@ public final class JawbusConfigScreen extends Screen {
     }
 
     /** Slider that shows a percentage and hands the real value to a setter. */
-    private static final class PercentSlider extends AbstractSliderButton {
+    static final class PercentSlider extends AbstractSliderButton {
         private final String label;
         private final double min, max;
         private final DoubleConsumer setter;
