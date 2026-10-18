@@ -91,7 +91,7 @@ public final class Cinematic {
         }
     }
 
-    private static final Golem3D G3 = new Golem3D();
+    private static final GolemRenderer GR = new GolemRenderer();   // draws the 3D golem on a background thread
     private static final ArrayDeque<Req> QUEUE = new ArrayDeque<>();
     private static Playback current;
     private static final int MAX_QUEUE = 12;       // reveals waiting (rewards beyond this are merged, never dropped)
@@ -143,6 +143,7 @@ public final class Cinematic {
     public static void reset() {
         QUEUE.clear();
         current = null;
+        GR.clear();
         gapUntilNs = 0;
         hiddenSinceNs = 0;
     }
@@ -238,13 +239,9 @@ public final class Cinematic {
         // with a backlog the reveal is shortened (never skipped) and uses fewer particles and sounds
         Playback p = new Playback(r, timeline(r.reward().tier, vial), JawbusConfig.get().duration * (fast ? 0.6f : 1f), fast);
         p.icon = Icons.get(r.reward());
-        try {
-            G3.begin(p.tier, vial, p.seed, dbl(p.tl.cs()), dbl(p.tl.ce()), p.tl.burst());
-            p.chest = G3.chestAt(p.tl.burst());
-        } catch (Throwable ex) {
-            p.g3ok = false;
-            KillTracker.debug("3D golem could not start (" + ex + "), continuing without it.");
-        }
+        Golem3D.rectBudget = new int[]{700, 1500, 2200}[JawbusConfig.get().detail];
+        Golem3D.blockSize = new int[]{3, 2, 1}[JawbusConfig.get().detail];   // low / medium / high: chunkier picture, far fewer rectangles
+        GR.begin(p.tier, vial, p.seed, dbl(p.tl.cs()), dbl(p.tl.ce()), p.tl.burst());   // builds in the background
         buildCues(p.cues, p.tier, vial, p.tl);
         prewarm(p.cues);
         p.cues.sort(Comparator.comparingDouble(Cue::t));
@@ -583,6 +580,8 @@ public final class Cinematic {
         float sf = h * 0.80f * cfg.scale / Golem3D.FH;               // 3D framebuffer pixel -> GUI pixel
         float fox = cx - Golem3D.FW * sf / 2f;
         float foy = h * 0.50f + oyShift - Golem3D.FH * 0.52f * sf;
+        float[] chestNow = GR.chest();
+        if (chestNow != null) p.chest = chestNow;
         float chestX = fox + p.chest[0] * sf;
         int chestY = Math.round(foy + p.chest[1] * sf);
         boolean vial = p.reward.maxIntensity();
@@ -593,13 +592,12 @@ public final class Cinematic {
 
         // ---- the 3D golem (software-rendered, painted as merged rectangles) ----
         if (p.g3ok) {
-            try {
-                G3.draw(t);
-                G3.buildRects((tier == 1 && t > tl.itemDone()) ? a * 0.6f : a);
-                paintRects(g, G3, fox, foy, sf);
-            } catch (Throwable ex) {
-                p.g3ok = false; // fall back to effects + reward only
-                KillTracker.debug("3D golem failed (" + ex + "), continuing without it.");
+            if (GR.failed()) {
+                p.g3ok = false;                    // fall back to effects + reward only
+            } else {
+                GR.request(t, (tier == 1 && t > tl.itemDone()) ? a * 0.6f : a);
+                GolemRenderer.Frame fr = GR.frame();
+                if (fr != null) paintFrame(g, fr, fox, foy, sf);
             }
         }
 
@@ -667,6 +665,13 @@ public final class Cinematic {
         }
         if (p.tag != null) centered(g, font, p.tag, cx, topY, 1.2f, argb(0xFFCC66, a * 0.8f));
         if (QUEUE.size() > 0) centered(g, font, "+" + QUEUE.size() + " more", cx, topY + 12, 1.1f, argb(0xAAAAAA, a * 0.7f));
+    }
+
+    private static void paintFrame(GuiGraphicsExtractor g, GolemRenderer.Frame f, float fox, float foy, float sf) {
+        for (int i = 0; i < f.n; i++) {
+            g.fill(Math.round(fox + f.x0[i] * sf), Math.round(foy + f.y0[i] * sf),
+                    Math.round(fox + f.x1[i] * sf), Math.round(foy + f.y1[i] * sf), f.c[i]);
+        }
     }
 
     private static void paintRects(GuiGraphicsExtractor g, Golem3D gg, float fox, float foy, float sf) {
