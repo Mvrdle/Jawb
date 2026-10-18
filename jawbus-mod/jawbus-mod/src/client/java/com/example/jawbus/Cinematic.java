@@ -239,8 +239,8 @@ public final class Cinematic {
         // with a backlog the reveal is shortened (never skipped) and uses fewer particles and sounds
         Playback p = new Playback(r, timeline(r.reward().tier, vial), JawbusConfig.get().duration * (fast ? 0.6f : 1f), fast);
         p.icon = Icons.get(r.reward());
-        Golem3D.rectBudget = new int[]{700, 1500, 2200}[JawbusConfig.get().detail];
-        Golem3D.blockSize = new int[]{3, 2, 1}[JawbusConfig.get().detail];   // low / medium / high: chunkier picture, far fewer rectangles
+        applyDetail();
+        lastFrameNs = 0;
         GR.begin(p.tier, vial, p.seed, dbl(p.tl.cs()), dbl(p.tl.ce()), p.tl.burst());   // builds in the background
         buildCues(p.cues, p.tier, vial, p.tl);
         prewarm(p.cues);
@@ -559,6 +559,37 @@ public final class Cinematic {
         }
     }
 
+    // ---- picture detail: every merged rectangle costs the game's GUI a fixed amount (and more as their number grows),
+    // so a chunkier golem is far cheaper. Auto starts at 2x2 blocks and moves by itself according to the frame time.
+    private static int autoBlock = 2;
+    private static long lastFrameNs, lastAdaptNs;
+    private static float smoothMs = 8f;
+
+    private static void applyDetail() {
+        int mode = JawbusConfig.get().detailMode;
+        Golem3D.rectBudget = 1500;
+        Golem3D.blockSize = mode == 3 ? autoBlock : new int[]{3, 2, 1}[mode];
+    }
+
+    private static void adaptDetail() {
+        long now = System.nanoTime();
+        if (lastFrameNs != 0) {
+            float ms = (now - lastFrameNs) / 1e6f;
+            if (ms < 120f) smoothMs = smoothMs * 0.92f + ms * 0.08f;
+        }
+        lastFrameNs = now;
+        if (JawbusConfig.get().detailMode != 3) return;
+        long since = now - lastAdaptNs;
+        if (smoothMs > 10f && autoBlock < 4 && since > 350_000_000L) {          // below ~100 fps: go chunkier
+            autoBlock++;
+            lastAdaptNs = now;
+        } else if (smoothMs < 4f && autoBlock > 1 && since > 3_000_000_000L) {  // above ~250 fps for a while: sharpen again
+            autoBlock--;
+            lastAdaptNs = now;
+        }
+        Golem3D.blockSize = autoBlock;
+    }
+
     private static void renderInner(GuiGraphicsExtractor g) {
         Playback p = current;
         if (p == null) return;
@@ -568,6 +599,7 @@ public final class Cinematic {
         Tl tl = p.tl;
         int tier = p.tier;
         float t = p.t();
+        adaptDetail();
         float a0 = clamp01(Math.min(t / 0.3f, (tl.total() - t) / 0.6f));
         if (a0 <= 0.01f) return;
         float a = a0 * cfg.opacity;
@@ -734,7 +766,7 @@ public final class Cinematic {
         float k = vial ? 1.4f : 1f;
 
         if (p.fast) k *= 0.5f;
-        int sparks = Math.round((tier == 1 ? 24 : tier == 2 ? 80 : 170) * k);
+        int sparks = Math.round((tier == 1 ? 20 : tier == 2 ? 60 : 110) * k);
         float sx0 = ox;
         float sy0 = oy;
         for (int n = 0; n < sparks; n++) {
@@ -747,7 +779,7 @@ public final class Cinematic {
                     Math.max(1f, cell * (0.4f + 0.5f * r.nextFloat())), 0f));
         }
 
-        int smoke = Math.round((tier == 1 ? 5 : tier == 2 ? 22 : 40) * k);
+        int smoke = Math.round((tier == 1 ? 4 : tier == 2 ? 16 : 26) * k);
         for (int n = 0; n < smoke; n++) {
             float vx = (r.nextFloat() - 0.5f) * h * 0.16f;
             float vy = -h * (0.10f + 0.10f * r.nextFloat());
