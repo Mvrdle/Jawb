@@ -24,6 +24,7 @@ public final class JawbusSlotMachine implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         JawbusConfig.load();
+        Stats.load();
 
         // chat: loot shares + drop lines (action-bar text is ignored)
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
