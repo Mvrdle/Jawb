@@ -126,7 +126,10 @@ final class KillTracker {
         if (tick - t.seen > 12) return;                                   // stale: not a fresh disappearance
         if (mc.player.distanceToSqr(t.x, t.y, t.z) > MAX_DIST_SQ) return; // too far: probably walked out of range
         int n = LEDGER.onKill(tick, t.x, t.z, false);                      // -1 = another plate of a kill already open
-        if (n > 0) debug("Lord Jawbus #" + n + " died nearby. Looking for its reward...");
+        if (n > 0) {
+            Stats.recordKill();
+            debug("Lord Jawbus #" + n + " died nearby. Looking for its reward...");
+        }
     }
 
     /** Chat handler: loot shares, and drop lines. Always processed, whether or not the chat is visible. */
@@ -156,6 +159,7 @@ final class KillTracker {
             }
             List<Reward> others = new ArrayList<>(rs);
             others.remove(best);
+            if (!sim) for (Reward x : rs) Stats.recordDrop(x, true);
             Cinematic.enqueue(best, others, true, sim, sim ? "SIMULATED LOOT SHARE" : null);
             debug("Loot share: " + best.displayName + " -> tier " + best.tier);
             return;
@@ -198,6 +202,7 @@ final class KillTracker {
         others.sort(Comparator.comparingInt((Reward x) -> x.priority).reversed());
         String tag = r.concurrent() ? "KILL " + r.killNumber() + (r.ambiguous() ? "  (reward match is a best guess)" : "") : null;
         if (r.sim()) tag = "SIMULATED" + (tag == null ? "" : "  " + tag);
+        if (!r.sim()) for (Reward x : r.rewards()) Stats.recordDrop(x, false);
         Cinematic.enqueue(best, others, false, r.sim(), tag);
         StringBuilder sb = new StringBuilder("Kill " + r.killNumber() + ":");
         for (Reward x : r.rewards()) sb.append(' ').append(x.displayName).append(" (tier ").append(x.tier).append(')');
@@ -237,7 +242,7 @@ final class KillTracker {
             case 1 -> {
                 at(0, () -> simKill(0));
                 at(4, () -> simKill(6));
-                at(10, () -> simChat("RARE DROP! Lord Jawbus Shard"));
+                at(10, () -> simChat("RARE DROP! Magma Lord Fragment"));
                 at(12, () -> simChat("CRAZY RARE DROP! Carmine Dye"));
             }
             case 2 -> {
