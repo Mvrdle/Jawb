@@ -163,9 +163,9 @@ final class Golem3D {
         int tw, th;
         int[] base;
         boolean[] eye;
-        final float[][] crackT = new float[4][];
-        final float[][] haloT = new float[4][];
-        final float[][] halo = new float[4][];
+        final float[][] crackT = new float[5][];
+        final float[][] haloT = new float[5][];
+        final float[][] halo = new float[5][];
         boolean exterior;
     }
 
@@ -181,7 +181,7 @@ final class Golem3D {
         final List<Chunk> props = new ArrayList<>();   // scenery: basalt slabs around the stage
         private List<Chunk> target;
         private int part;
-        final boolean[] ready = new boolean[4];
+        final boolean[] ready = new boolean[5];
 
         Model() {
             target = chunks;
@@ -189,7 +189,7 @@ final class Golem3D {
             grid(TORSO, 0, -9, 9, 21, 33, -5.5, 5.5, 3, 2, 2, 2);
             grid(ROOT, 0, -4.5, 4.5, 16, 21, -3, 3, 1, 1, 1, 3);
             grid(HEAD, 1, -4, 4, 33, 43, -3, 5, 2, 2, 2, 2);
-            grid(HEAD, 2, -1, 1, 35.5, 39.5, 5, 7, 1, 1, 1, 2);
+            grid(HEAD, 2, -1, 1, 32, 36, 5, 7, 1, 1, 1, 2);
             grid(ARM_A, 0, -13, -9, 2, 32, -3, 3, 1, 3, 1, 3);
             grid(ARM_B, 0, 9, 13, 2, 32, -3, 3, 1, 3, 1, 3);
             grid(UL_A, 0, -7.5, -1.5, 8, 16, -2.5, 2.5, 1, 1, 1, 3);
@@ -277,7 +277,7 @@ final class Golem3D {
                     f.base[idx] = skinned(px, py, pz, axis, sign, region);
                     if (region == 1 && axis == 2 && sign > 0 && py > 37.1 && py < 39.0 && Math.abs(px) > 0.9 && Math.abs(px) < 3.3) {
                         f.eye[idx] = true;
-                        if (SKIN == null) f.base[idx] = 0x2E2724;
+                        if (SKIN == null) f.base[idx] = 0x7E1C1C;
                     }
                 }
             }
@@ -306,7 +306,7 @@ final class Golem3D {
                 {-9, 9, 21, 33, -5.5, 5.5, 0, 40, 18, 12, 11},
                 {-4.5, 4.5, 16, 21, -3, 3, 0, 70, 9, 5, 6},
                 {-4, 4, 33, 43, -3, 5, 0, 0, 8, 10, 8},
-                {-1, 1, 35.5, 39.5, 5, 7, 24, 0, 2, 4, 2},
+                {-1, 1, 32, 36, 5, 7, 24, 0, 2, 4, 2},
                 {-13, -9, 2, 32, -3, 3, 60, 21, 4, 30, 6},
                 {9, 13, 2, 32, -3, 3, 60, 58, 4, 30, 6},
                 {-7.5, -1.5, 0, 16, -2.5, 2.5, 37, 0, 6, 16, 5},
@@ -357,17 +357,17 @@ final class Golem3D {
             double n = fbm(q[0] * 0.17, q[1] * 0.17, q[2] * 0.17);
             double tone = clamp01(0.5 * n + 0.9 * (r - 0.5) * 0.55 + 0.35);
             int lv = (int) Math.round(tone * 3);   // 4 flat shades: pixel-art look
-            int c = lv <= 0 ? 0x77736B : lv == 1 ? 0xA09B91 : lv == 2 ? 0xBDB8AD : 0xCFCAC0;
+            int c = lv <= 0 ? 0x9A8A7C : lv == 1 ? 0xB8A99A : lv == 2 ? 0xD0C2B3 : 0xE2D6C8;
             if (part == 3) {
-                c = r < 0.4 ? 0x8E613F : r < 0.8 ? 0xA27248 : 0xB58558;
+                c = r < 0.4 ? 0x9C8573 : r < 0.8 ? 0xAE9784 : 0xBFA996;
             } else {
                 double low = part >= 6 ? (y < 5 ? 1 : 0) : (part >= 4 ? (y < 9 ? 1 : 0) : 0);
-                if (low > 0) c = r < 0.5 ? 0x5C5852 : 0x6E6A63;
+                if (low > 0) c = part >= 6 ? (r < 0.5 ? 0x5A3E2A : 0x6B4A33) : (r < 0.5 ? 0xB0A292 : 0xC2B4A4);
                 if (part != 2 && part != 1) {
                     double vine = noise3(q[0] * 0.23 + 3, q[1] * 0.23 + 1, q[2] * 0.23 + 8);
-                    if (vine > 0.70) c = r < 0.5 ? 0x4C7B30 : 0x3B6828;
+                    if (vine > 0.70) c = r > 0.93 ? 0xE8D44A : r < 0.5 ? 0x5E8F2E : 0x4A7A25;
                 }
-                if (part == 2 && y < 34.2) c = mixRgb(c, 0x77736B, 0.5);   // jaw shadow
+                if (part == 2 && y < 34.2) c = mixRgb(c, 0x8A7A6C, 0.45);   // jaw shadow
             }
             return c;
         }
@@ -446,9 +446,12 @@ final class Golem3D {
                     double d = Math.sqrt(sq(x * 0.85) + sq((y - 27) * 1.15) + sq((z - 4) * 0.7));
                     if (r < 0.021 && d <= 25) best = Math.min(best, 0.12 + d / 25 * 0.80 + 0.08 * noise3(x * .3 + 3, y * .3, z * .3));
                 }
-            } else {
+            } else if (tier == 3) {
                 double d = Math.sqrt(sq(x) + sq((y - 27) * 0.9) + sq(z * 0.8));
                 if (r < 0.034 && d <= 54) best = Math.min(best, 0.08 + d / 54 * 0.84 + 0.08 * noise3(x * .3 + 3, y * .3, z * .3));
+            } else {                                   // stage 4 (maximum): a much denser network over the whole body
+                double d = Math.sqrt(sq(x * 0.8) + sq((y - 24) * 0.7) + sq(z * 0.7));
+                if (r < 0.062 && d <= 60) best = Math.min(best, 0.05 + d / 60 * 0.88 + 0.07 * noise3(x * .3 + 3, y * .3, z * .3));
             }
             return best;
         }
@@ -563,7 +566,7 @@ final class Golem3D {
     private static final class Pose {
         final double[] rx = new double[NJ], ry = new double[NJ], rz = new double[NJ];
         double tx, ty, tz;
-        final double[] g = new double[3];     // crack growth of stage 1, 2, 3 (0..1)
+        final double[] g = new double[4];     // crack growth of stage 1, 2, 3, 4 (0..1)
         double heat, pitch = 0.16, yaw = 0.30, zoom = 1.0;
         double tgy = 22, tgz = 0;   // camera target (follows the body when it falls toward the viewer)
         double lying;      // 0..1, how far the body has fallen (for the shadow)
@@ -728,6 +731,9 @@ final class Golem3D {
                 if (t < ce[2]) {
                     amp = 0.2 + 1.6 * p.g[2];
                     f = 1 + 0.5 * u3;
+                } else if (stages >= 4) {
+                    amp = 0.10 + 0.04 * Math.sin(t * 9);                // a held breath before the fourth escalation
+                    f = 1.2;
                 } else {
                     amp = 0.35 + 0.12 * Math.sin(t * 40);
                     f = 1.5;
@@ -737,9 +743,27 @@ final class Golem3D {
                 p.rx[HEAD] += -0.25 * p.g[2];
                 p.rx[TORSO] += -0.10 * p.g[2];
             }
+            if (stages >= 4 && t >= cs[3]) {
+                // ---- stage 4 (maximum only): pure white-hot, the golem hovers and the whole body cracks apart ----
+                double u4 = clamp01((t - cs[3]) / (ce[3] - cs[3]));
+                p.g[3] = 1 - Math.pow(1 - u4, 2.0);
+                heat = Math.max(heat, 0.92 + 0.08 * u4);
+                if (t < ce[3]) {
+                    amp = 0.4 + 2.2 * p.g[3];
+                    f = 1.6 + 0.6 * u4;
+                } else {
+                    amp = 0.30 + 0.10 * Math.sin(t * 40);
+                    f = 2.0;
+                }
+                p.ty += 5.0 * ease(u4) + 0.6 * Math.sin(t * 6) * u4;
+                p.rz[ARM_A] += 0.22 * p.g[3];
+                p.rz[ARM_B] -= 0.22 * p.g[3];
+                p.rx[HEAD] += -0.20 * p.g[3];
+                p.rx[TORSO] += -0.08 * p.g[3];
+            }
             if (amp > 0) shake(p, t, amp, f);
             p.pitch = tier == 2 ? 0.15 : 0.14;
-            p.zoom = 1 + 0.06 * g2 + (tier >= 3 ? 0.06 * p.g[2] : 0);
+            p.zoom = 1 + 0.06 * g2 + (tier >= 3 ? 0.06 * p.g[2] : 0) + (stages >= 4 ? 0.05 * p.g[3] : 0);
         }
         p.heat = heat;
     }
@@ -787,11 +811,12 @@ final class Golem3D {
     void begin(int tier, boolean vial, long seed, double[] cs, double[] ce, double burst) {
         this.tier = Math.max(1, Math.min(3, tier));
         this.vial = vial;
+        this.stages = this.tier < 3 ? this.tier : (vial && cs.length >= 4 ? 4 : 3);
         this.cs = cs.clone();
         this.ce = ce.clone();
         this.burst = burst;
         Model m = model();
-        for (int k = 1; k <= this.tier; k++) m.ensure(k);
+        for (int k = 1; k <= this.stages; k++) m.ensure(k);
         Random r = new Random(seed);
         int n = m.chunks.size();
         launch = new double[n];
@@ -844,9 +869,21 @@ final class Golem3D {
             double c = this.cs[2], d = this.ce[2];
             for (int i = 0; i < 26; i++) chips.add(chip(r, c + (d - c) * (0.30 + 0.70 * r.nextDouble()), 1.3, false, 12 + 16 * r.nextDouble(), 1.3 + r.nextDouble()));
             for (int i = 0; i < 70; i++) chips.add(chip(r, c + (d - c) * (0.20 + 0.85 * r.nextDouble()), 1.0, true, 10 + 16 * r.nextDouble(), 0.8));
+            if (stages >= 4) {                                   // maximum: a fourth escalation with its own sparks and chips
+                double e = this.cs[3], f = this.ce[3];
+                for (int i = 0; i < 18; i++) chips.add(chip(r, e + (f - e) * (0.30 + 0.70 * r.nextDouble()), 1.3, false, 14 + 18 * r.nextDouble(), 1.3 + r.nextDouble()));
+                for (int i = 0; i < 50; i++) chips.add(chip(r, e + (f - e) * (0.20 + 0.85 * r.nextDouble()), 1.0, true, 12 + 18 * r.nextDouble(), 0.8));
+            }
             double mult = vial ? 1.25 : 1.0;
             for (int i = 0; i < Math.round(40 * mult); i++) chips.add(shard(r, false, (55 + 70 * r.nextDouble()) * mult));
             for (int i = 0; i < Math.round(60 * mult); i++) chips.add(shard(r, true, (50 + 85 * r.nextDouble()) * mult));
+        }
+        // work out where every launching chunk starts now, so the first frame of the burst does no extra work
+        for (int i = 0; i < n; i++) {
+            if (!launches[i]) continue;
+            Pose fp = new Pose();
+            poseAt(fp, launch[i]);
+            frozen[i] = joints(fp)[m.chunks.get(i).joint];
         }
     }
 
@@ -912,7 +949,8 @@ final class Golem3D {
 
     private void poseAt(Pose p, double t) {
         double te = t;
-        if (tier == 3 && t > ce[2]) te = ce[2] + (t - ce[2]) * 0.04;       // the build-up almost freezes before detonation
+        int last = stages - 1;
+        if (tier == 3 && t > ce[last]) te = ce[last] + (t - ce[last]) * 0.04;   // the build-up almost freezes before detonation
         pose(p, te);
         if (tier == 3 && t > burst) p.heat = Math.max(0.12, 1 - (t - burst) * 0.9);
     }
@@ -921,7 +959,8 @@ final class Golem3D {
     // Rendering
     // ------------------------------------------------------------------
 
-    private double[] curG = new double[3];
+    private double[] curG = new double[4];
+    private int stages = 1, curStages = 1;
     private double curHeat, curCore;
     private int curTier;
     private double[] lightDir = norm(-0.45, 0.55, 0.70);
@@ -938,7 +977,8 @@ final class Golem3D {
         Pose p = new Pose();
         poseAt(p, t);
         setupCamera(p);
-        System.arraycopy(p.g, 0, curG, 0, 3);
+        System.arraycopy(p.g, 0, curG, 0, 4);
+        curStages = stages;
         curHeat = p.heat;
         curTier = tier;
         double[][] w = joints(p);
@@ -1232,7 +1272,7 @@ final class Golem3D {
             return mixRgb(rgb, glow, hh);
         }
         double front = -1, halo = 0;
-        for (int t = 1; t <= curTier; t++) {          // every stage reached so far contributes its cracks
+        for (int t = 1; t <= curStages; t++) {        // every stage reached so far contributes its cracks
             double g = curG[t - 1];
             if (g <= 0 || f.crackT[t] == null) continue;
             if (f.crackT[t][ti] <= g) {
@@ -1266,13 +1306,30 @@ final class Golem3D {
     private final int[] openPrev = new int[FW + 1], openCur = new int[FW + 1];
 
     /** Slightly coarser colours (steps of 12) so that neighbouring pixels merge into longer rectangles. */
+    private static int qStep = 12;
+
     private static int quant(int a, int c) {
-        int r = ((c >> 16) & 255) / 12 * 12, g = ((c >> 8) & 255) / 12 * 12, b = (c & 255) / 12 * 12;
+        int q = qStep;
+        int r = ((c >> 16) & 255) / q * q, g = ((c >> 8) & 255) / q * q, b = (c & 255) / q * q;
         return ((a / 16 * 16 + 8) << 24) | (r << 16) | (g << 8) | b;
     }
 
     /** Turns {@link #pix} into rectangles. alphaMul scales every pixel's alpha (global opacity / fade). */
     void buildRects(float alphaMul) {
+        qStep = 12;
+        buildRectsPass(alphaMul);
+        // the burst frames are the busiest: merge more aggressively there so the GUI never has to draw thousands of rects
+        if (rectCount > 3000) {
+            qStep = 24;
+            buildRectsPass(alphaMul);
+        }
+        if (rectCount > 4500) {
+            qStep = 40;
+            buildRectsPass(alphaMul);
+        }
+    }
+
+    private void buildRectsPass(float alphaMul) {
         rectCount = 0;
         java.util.Arrays.fill(openPrev, -1);
         for (int y = 0; y < FH; y++) {
