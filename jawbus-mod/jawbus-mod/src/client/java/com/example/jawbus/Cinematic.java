@@ -185,14 +185,27 @@ public final class Cinematic {
     }
 
     private static Tl timeline(int tier, boolean vial) {
-        // Higher tiers replay the earlier stages with a pause in between (like a ball shaking before it clicks shut).
-        return switch (tier) {
-            case 1 -> new Tl(new float[]{0.35f}, new float[]{1.15f}, 2.25f, 3.1f, 6.2f);
-            case 2 -> new Tl(new float[]{0.35f, 2.3f}, new float[]{1.1f, 4.0f}, 4.6f, 5.6f, 9.6f);
-            default -> vial
-                    ? new Tl(new float[]{0.35f, 2.2f, 4.0f}, new float[]{1.1f, 3.3f, 6.2f}, 6.9f, 8.5f, 13.4f)
-                    : new Tl(new float[]{0.35f, 2.2f, 4.0f}, new float[]{1.1f, 3.3f, 6.2f}, 6.9f, 8.3f, 12.4f);
-        };
+        // Higher tiers climb through the earlier stages one at a time, with a still pause after each, so the
+        // viewer cannot tell which stage is the last one until the golem finally detonates. Every length below is
+        // the default (seconds at duration 1.0); the timing sliders in the menu scale them.
+        JawbusConfig c = JawbusConfig.get();
+        int n = tier == 1 ? 1 : tier == 2 ? 2 : vial ? 4 : 3;
+        int idx = tier == 1 ? 0 : tier == 2 ? 1 : vial ? 3 : 2;
+        float[] len = {tier == 1 ? 0.8f : 0.75f, 1.8f, 2.1f, 2.2f};
+        float[] gap = {1.4f, 0.6f, 0.7f};
+        float[] hold = {1.1f, 0.5f, 1.0f, 1.0f};
+        float[] toItem = {0.85f, 1.0f, 1.6f, 1.7f};
+        float[] after = {3.1f, 4.0f, 4.0f, 4.2f};
+        float[] cs = new float[n], ce = new float[n];
+        float t = 0.35f;
+        for (int i = 0; i < n; i++) {
+            cs[i] = t;
+            ce[i] = t + len[i] / c.buildSpeed;
+            t = ce[i] + (i < n - 1 ? gap[i] * c.pauseScale : 0f);
+        }
+        float burst = ce[n - 1] + hold[idx] * c.finalHold;
+        float itemDone = burst + toItem[idx];
+        return new Tl(cs, ce, burst, itemDone, itemDone + after[idx] * c.rewardTime);
     }
 
     private static boolean skinTried;
@@ -233,6 +246,7 @@ public final class Cinematic {
             KillTracker.debug("3D golem could not start (" + ex + "), continuing without it.");
         }
         buildCues(p.cues, p.tier, vial, p.tl);
+        prewarm(p.cues);
         p.cues.sort(Comparator.comparingDouble(Cue::t));
         if (fast) {                                    // thin out the audio, keep the big moment
             List<Cue> keep = new ArrayList<>();
@@ -256,6 +270,20 @@ public final class Cinematic {
     }
 
     /** Regular-volume cue (rumbles, cracks, impacts for tiers 1 and 2). */
+    private static final java.util.IdentityHashMap<Object, Boolean> WARM = new java.util.IdentityHashMap<>();
+
+    /** Loads every sound of this reveal ahead of time (near-silent) so the first big blast does not stall the game. */
+    private static void prewarm(List<Cue> cues) {
+        try {
+            for (Object o : PRE) {
+                if (WARM.put(o, true) == null) play(o, 1f, 0.001f);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static final List<Object> PRE = new ArrayList<>();
+
     private static Cue reg(float t, Object snd, float pitch, float vol) {
         return new Cue(t, () -> play(snd, pitch, vol * JawbusConfig.get().regularVolume));
     }
@@ -263,6 +291,16 @@ public final class Cinematic {
     /** Jackpot-volume cue (tier 3 explosion, bass, jackpot). */
     private static Cue jack(float t, Object snd, float pitch, float vol) {
         return new Cue(t, () -> play(snd, pitch, vol * JawbusConfig.get().jackpotVolume));
+    }
+
+    /** Looks a vanilla sound up by field name (names differ between versions); falls back so it can never fail to compile or play. */
+    private static Object snd(String name, Object fallback) {
+        try {
+            Object v = SoundEvents.class.getField(name).get(null);
+            if (v instanceof SoundEvent || v instanceof Holder<?>) return v;
+        } catch (Throwable ignored) {
+        }
+        return fallback;
     }
 
     private static void buildCues(List<Cue> c, int tier, boolean vial, Tl tl) {
@@ -275,60 +313,122 @@ public final class Cinematic {
         Object bell = SoundEvents.NOTE_BLOCK_BELL;
         Object orb = SoundEvents.EXPERIENCE_ORB_PICKUP;
         Object twinkle = SoundEvents.FIREWORK_ROCKET_TWINKLE;
-        float cs1 = tl.cs()[0], ce1 = tl.ce()[0];
+        Object thunder = snd("LIGHTNING_BOLT_THUNDER", boom);
+        Object golem = snd("IRON_GOLEM_DAMAGE", land);
+        Object hurt = snd("IRON_GOLEM_HURT", bass);
+        Object reson = snd("AMETHYST_BLOCK_RESONATE", bell);
+        Object crystal = snd("AMETHYST_CLUSTER_BREAK", chime);
+        Object glass = snd("GLASS_BREAK", blast);
+        Object conduit = snd("CONDUIT_ACTIVATE", level);
+        Object totem = snd("TOTEM_USE", level);
+        Object sonic = snd("WARDEN_SONIC_BOOM", boom);
+        Object growl = snd("ENDER_DRAGON_GROWL", thunder);
+        Object portal = snd("END_PORTAL_SPAWN", thunder);
+        Object toast = snd("UI_TOAST_CHALLENGE_COMPLETE", level);
+        PRE.clear();
+        PRE.addAll(java.util.Arrays.asList(bass, land, boom, chime, blast, level, bell, orb, twinkle, thunder, golem, hurt, reson, crystal, glass, conduit, totem, sonic, growl, portal, toast));
 
+        float cs1 = tl.cs()[0], ce1 = tl.ce()[0], burst = tl.burst();
         // stage 1 (every tier): first crack, twitch, stagger - subdued
         c.add(reg(cs1, bass, 1.4f, 0.35f));
         c.add(reg(cs1 + 0.3f, bass, 1.2f, 0.30f));
         c.add(reg(ce1 + 0.05f, bass, 0.8f, 0.35f));
         c.add(reg(ce1 + 0.35f, bass, 0.7f, 0.35f));
-        if (tier == 1) {                                   // the flop
+        if (tier == 1) {                                   // the flop: the anvil drop stays for the lowest tier
             c.add(reg(ce1 + 0.75f, bass, 0.6f, 0.30f));
-            c.add(reg(tl.burst(), land, 0.6f, 0.5f));
-            c.add(reg(tl.burst(), boom, 1.6f, 0.15f));
-            c.add(reg(tl.burst() + 0.25f, chime, 1.2f, 0.35f));
+            c.add(reg(burst, land, 0.6f, 0.5f));
+            c.add(reg(burst, boom, 1.6f, 0.15f));
+            c.add(reg(burst + 0.25f, chime, 1.2f, 0.35f));
             return;
         }
         c.add(reg(ce1 + 0.65f, bass, 0.6f, 0.30f));        // rocks forward, then holds (silence in the pause)
 
+        // stage 2: rising rumble with stone grinding, ends with a thump
         float cs2 = tl.cs()[1], ce2 = tl.ce()[1];
-        for (float x = cs2; x < ce2; x += 0.22f) {         // stage 2: rising rumble
+        for (float x = cs2; x < ce2; x += 0.22f) {
             float u = (x - cs2) / (ce2 - cs2);
             c.add(reg(x, bass, 0.5f + 0.6f * u, 0.25f + 0.6f * u));
         }
-        if (tier == 2) {                                   // the rupture
-            c.add(reg(ce2, land, 0.5f, 0.4f));
-            c.add(reg(tl.burst(), boom, 0.8f, 0.8f));
-            c.add(reg(tl.burst(), land, 0.5f, 0.7f));
-            c.add(reg(tl.burst() + 0.25f, chime, 1.0f, 0.5f));
-            c.add(reg(tl.burst() + 0.30f, blast, 1.2f, 0.3f));
+        for (float x = cs2 + 0.4f; x < ce2 - 0.2f; x += 0.7f) c.add(reg(x, hurt, 0.6f + 0.3f * (x - cs2) / (ce2 - cs2), 0.35f));
+        c.add(reg(ce2, golem, 0.55f, 0.6f));
+        c.add(reg(ce2 + 0.05f, bass, 0.4f, 0.6f));
+        if (tier == 2) {                                   // the rupture: layered boom + glassy shatter + chime rise
+            c.add(reg(burst - 0.35f, reson, 0.8f, 0.45f));
+            c.add(reg(burst, boom, 0.8f, 0.9f));
+            c.add(reg(burst, golem, 0.5f, 0.7f));
+            c.add(reg(burst + 0.05f, crystal, 1.0f, 0.6f));
+            c.add(reg(burst + 0.20f, chime, 1.0f, 0.5f));
+            c.add(reg(burst + 0.30f, blast, 1.2f, 0.35f));
+            arp(c, burst + 0.35f, chime, new float[]{1.0f, 1.26f, 1.5f}, 0.11f, 0.45f, false);
             return;
         }
-        c.add(reg(ce2, land, 0.5f, 0.5f));                 // tier 3: stage 2 ends with a thump, then a pause
-        c.add(reg(ce2 + 0.05f, bass, 0.4f, 0.6f));
 
-        float cs3 = tl.cs()[2], ce3 = tl.ce()[2];          // stage 3: build, heartbeat, SILENT pause, then jackpot
+        // stage 3: heartbeat, rising tone, then a held pause
+        float cs3 = tl.cs()[2], ce3 = tl.ce()[2];
         for (float x = cs3; x < ce3; x += 0.2f) {
             float u = (x - cs3) / (ce3 - cs3);
             c.add(reg(x, bass, 0.4f + 0.8f * u, 0.3f + 0.7f * u));
         }
-        for (float d : new float[]{0.9f, 0.6f, 0.35f, 0.15f}) {
-            c.add(reg(ce3 - d, bass, 0.5f, 0.8f));
-            c.add(reg(ce3 - d + 0.09f, bass, 0.45f, 0.6f));
+        for (float x = cs3; x < ce3 - 0.3f; x += 0.45f) {
+            float u = (x - cs3) / (ce3 - cs3);
+            c.add(reg(x, reson, 0.6f + 1.0f * u, 0.30f + 0.4f * u));
         }
-        c.add(jack(tl.burst(), boom, 0.5f, 1.0f));
-        c.add(jack(tl.burst(), land, 0.5f, 1.0f));
-        c.add(jack(tl.burst(), bass, 0.35f, 1.0f));
-        c.add(jack(tl.burst() + 0.15f, level, 1.0f, 1.0f));
-        c.add(jack(tl.burst() + 0.20f, blast, 1.0f, 0.8f));
-        float[] arp = {0.84f, 1.0f, 1.26f, 1.5f, 1.68f, 2.0f};
-        for (int i = 0; i < arp.length; i++) c.add(jack(tl.burst() + 0.3f + i * 0.09f, bell, arp[i], 0.7f));
-        for (int i = 0; i < 8; i++) c.add(jack(tl.burst() + 0.5f + i * 0.06f, orb, 0.8f + 0.1f * i, 0.5f));
-        if (vial) {                                        // maximum intensity: extra boom, second fanfare, more chimes
-            c.add(jack(tl.burst() + 0.25f, boom, 0.4f, 1.0f));
-            c.add(jack(tl.burst() + 0.9f, level, 1.26f, 1.0f));
-            for (int i = 0; i < 8; i++) c.add(jack(tl.burst() + 0.9f + i * 0.07f, bell, 1.0f + 0.14f * i, 0.7f));
-            for (int i = 0; i < 6; i++) c.add(jack(tl.burst() + 1.1f + i * 0.08f, twinkle, 1.0f + 0.1f * i, 0.6f));
+        c.add(reg(ce3, golem, 0.5f, 0.8f));
+        c.add(reg(ce3, thunder, 0.7f, 0.5f));
+        c.add(reg(ce3 + 0.05f, bass, 0.35f, 0.8f));
+
+        if (!vial) {                                       // tier 3: final held breath, heartbeat, jackpot
+            for (float d : new float[]{0.7f, 0.45f, 0.25f, 0.10f}) {
+                c.add(reg(burst - d, bass, 0.5f, 0.8f));
+                c.add(reg(burst - d + 0.08f, bass, 0.45f, 0.6f));
+            }
+            jackpot(c, burst, boom, golem, bass, thunder, glass, level, blast, bell, orb, conduit);
+            return;
+        }
+
+        // stage 4 (maximum only): everything louder, higher, and longer
+        float cs4 = tl.cs()[3], ce4 = tl.ce()[3];
+        for (float x = cs4; x < ce4; x += 0.17f) {
+            float u = (x - cs4) / (ce4 - cs4);
+            c.add(reg(x, bass, 0.45f + 1.0f * u, 0.4f + 0.7f * u));
+        }
+        for (float x = cs4; x < ce4 - 0.2f; x += 0.3f) {
+            float u = (x - cs4) / (ce4 - cs4);
+            c.add(reg(x, reson, 0.7f + 1.3f * u, 0.4f + 0.5f * u));
+        }
+        c.add(reg(cs4 + 0.9f, sonic, 1.0f, 0.5f));
+        c.add(reg(ce4 - 0.6f, growl, 0.8f, 0.45f));
+        for (float d : new float[]{0.7f, 0.45f, 0.25f, 0.10f}) {
+            c.add(reg(burst - d, bass, 0.5f, 0.9f));
+            c.add(reg(burst - d + 0.08f, bass, 0.45f, 0.7f));
+        }
+        jackpot(c, burst, boom, golem, bass, thunder, glass, level, blast, bell, orb, conduit);
+        c.add(jack(burst + 0.05f, sonic, 0.8f, 1.0f));
+        c.add(jack(burst + 0.10f, portal, 1.0f, 0.8f));
+        c.add(jack(burst + 0.25f, boom, 0.4f, 1.0f));
+        c.add(jack(burst + 0.9f, totem, 1.0f, 1.0f));
+        c.add(jack(burst + 1.0f, toast, 1.0f, 0.8f));
+        arp(c, burst + 0.9f, bell, new float[]{1.0f, 1.14f, 1.26f, 1.4f, 1.5f, 1.68f, 1.88f, 2.0f}, 0.07f, 0.7f, true);
+        arp(c, burst + 1.1f, twinkle, new float[]{1.0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f}, 0.08f, 0.6f, true);
+    }
+
+    private static void jackpot(List<Cue> c, float b, Object boom, Object golem, Object bass, Object thunder,
+                                Object glass, Object level, Object blast, Object bell, Object orb, Object conduit) {
+        c.add(jack(b, boom, 0.5f, 1.0f));
+        c.add(jack(b, golem, 0.45f, 1.0f));
+        c.add(jack(b, bass, 0.35f, 1.0f));
+        c.add(jack(b, thunder, 0.8f, 0.7f));
+        c.add(jack(b + 0.05f, glass, 0.7f, 0.6f));
+        c.add(jack(b + 0.15f, level, 1.0f, 1.0f));
+        c.add(jack(b + 0.20f, blast, 1.0f, 0.8f));
+        c.add(jack(b + 0.30f, conduit, 1.0f, 0.7f));
+        arp(c, b + 0.3f, bell, new float[]{0.84f, 1.0f, 1.26f, 1.5f, 1.68f, 2.0f}, 0.09f, 0.7f, true);
+        for (int i = 0; i < 8; i++) c.add(jack(b + 0.5f + i * 0.06f, orb, 0.8f + 0.1f * i, 0.5f));
+    }
+
+    private static void arp(List<Cue> c, float t0, Object snd, float[] pitches, float step, float vol, boolean jackpot) {
+        for (int i = 0; i < pitches.length; i++) {
+            c.add(jackpot ? jack(t0 + i * step, snd, pitches[i], vol) : reg(t0 + i * step, snd, pitches[i], vol));
         }
     }
 
@@ -355,6 +455,7 @@ public final class Cinematic {
             }
         } else {
             float cs2 = tl.cs()[1], ce2 = tl.ce()[1], cs3 = tl.cs()[2], ce3 = tl.ce()[2];
+            boolean four = tl.cs().length > 3;
             if (t >= cs2 && t < ce2) {
                 float u = (t - cs2) / (ce2 - cs2);
                 a = 0.10f + 0.30f * u * u;
@@ -364,7 +465,13 @@ public final class Cinematic {
             if (t >= cs3 && t < ce3) {
                 float u = (t - cs3) / (ce3 - cs3);
                 a = 0.15f + 0.7f * u * u;
-            } else if (t >= ce3 && t < tl.burst()) {
+            } else if (t >= ce3 && t < ce3 + 0.6f && four) {
+                a = 0.6f * (float) Math.exp(-(t - ce3) * 7f);
+            }
+            if (four && t >= tl.cs()[3] && t < tl.ce()[3]) {
+                float u = (t - tl.cs()[3]) / (tl.ce()[3] - tl.cs()[3]);
+                a = 0.25f + 0.9f * u * u;
+            } else if (t >= (four ? tl.ce()[3] : ce3) && t < burst0(tl)) {
                 a = 0.12f;
             } else if (tau >= 0f && tau < 2.2f) {
                 a = 3.2f * (float) Math.exp(-tau * 1.9f);
@@ -372,6 +479,10 @@ public final class Cinematic {
             if (p.reward.maxIntensity()) a *= 1.45f;
         }
         return a * JawbusConfig.get().shakeIntensity;
+    }
+
+    private static float burst0(Tl tl) {
+        return tl.burst();
     }
 
     public static boolean shakeActive() {
@@ -523,8 +634,7 @@ public final class Cinematic {
                 frame(g, x0, y0, rx + half, Math.round(iy) + half, Math.max(1, cell / 2), argb(rc, a * u * (0.55f - n * 0.17f)));
             }
             if (tier == 3 && u > 0.3f) sparkles(g, rx, Math.round(iy), px, cell, rc, t, a * u, vial ? 18 : 12);
-            // tier 3: the reward turns slowly (a flat item icon, so it turns like a coin)
-            float xs = tier == 3 ? Math.max(0.3f, Math.abs((float) Math.cos((t - is) * 1.5f))) : 1f;
+            float xs = 1f;                       // never squashed: the icon stays full width the whole time
             drawIcon(g, p.icon, rx, Math.round(iy), sIcon, xs);
 
             // name + rarity (once the reward has mostly arrived)
@@ -619,7 +729,7 @@ public final class Cinematic {
         float k = vial ? 1.4f : 1f;
 
         if (p.fast) k *= 0.5f;
-        int sparks = Math.round((tier == 1 ? 28 : tier == 2 ? 110 : 300) * k);
+        int sparks = Math.round((tier == 1 ? 24 : tier == 2 ? 80 : 170) * k);
         float sx0 = ox;
         float sy0 = oy;
         for (int n = 0; n < sparks; n++) {
@@ -632,7 +742,7 @@ public final class Cinematic {
                     Math.max(1f, cell * (0.4f + 0.5f * r.nextFloat())), 0f));
         }
 
-        int smoke = Math.round((tier == 1 ? 6 : tier == 2 ? 30 : 70) * k);
+        int smoke = Math.round((tier == 1 ? 5 : tier == 2 ? 22 : 40) * k);
         for (int n = 0; n < smoke; n++) {
             float vx = (r.nextFloat() - 0.5f) * h * 0.16f;
             float vy = -h * (0.10f + 0.10f * r.nextFloat());
