@@ -27,8 +27,8 @@ public final class StatsScreen extends Screen {
     @Override
     protected void init() {
         Reward[] rs = Reward.values();
-        pw = 330;
-        ph = 24 + 22 + 12 + rs.length * 11 + 14 + 24 + 8;
+        pw = 380;
+        ph = 24 + 44 + 12 + rs.length * 11 + 30 + 24 + 8;
         px = Math.max(4, (this.width - pw) / 2);
         py = Math.max(4, (this.height - ph) / 2);
         int by = py + ph - 22;
@@ -58,10 +58,16 @@ public final class StatsScreen extends Screen {
         g.text(this.font, this.title, px + 8, py + 8, 0xFFFFAA00, true);
 
         int y = py + 24;
-        g.text(this.font, "Lord Jawbus kills: " + s.kills, px + 8, y, 0xFFFFFFFF, true);
+        g.text(this.font, "Total kills: " + s.totalKills() + (s.isSynced() ? "  (Bestiary)" : "  (not synced)"),
+                px + 8, y, 0xFFFFFFFF, true);
         g.text(this.font, "Loot shares received: " + s.lootShares, px + 170, y, 0xFF55FFFF, true);
-        y += 16;
-        int cName = px + 8, cKill = px + 130, cShare = px + 185, cSince = px + 240, cExp = px + 290;
+        y += 11;
+        g.text(this.font, "Seen by the mod: " + s.kills + ".  To sync, open Bestiary > Crimson Isle > Lord Jawbus,",
+                px + 8, y, 0xFF888888, false);
+        y += 10;
+        g.text(this.font, "or type /jawbusRoll kills <number>. New kills are added on top.", px + 8, y, 0xFF888888, false);
+        y += 13;
+        int cName = px + 8, cKill = px + 140, cShare = px + 195, cSince = px + 255, cExp = px + 310;
         g.text(this.font, "Reward", cName, y, 0xFFAAAAAA, false);
         g.text(this.font, "Kills", cKill, y, 0xFFAAAAAA, false);
         g.text(this.font, "Share", cShare, y, 0xFFAAAAAA, false);
@@ -78,8 +84,8 @@ public final class StatsScreen extends Screen {
             g.text(this.font, Double.isNaN(p) ? "-" : fmt(s.kills * p / 100.0), cExp, y, 0xFFFFE9B0, true);
             y += 11;
         }
-        g.text(this.font, "Dry = kills since it last dropped from your own kill. Expect = kills x base drop chance.",
-                px + 8, y + 4, 0xFF888888, false);
+        g.text(this.font, "Dry = kills since it last dropped from your own kill.", px + 8, y + 4, 0xFF888888, false);
+        g.text(this.font, "Expect = kills the mod saw x the base drop chance.", px + 8, y + 14, 0xFF888888, false);
         super.extractRenderState(g, mouseX, mouseY, delta);
     }
 
