@@ -43,6 +43,7 @@ final class GolemRenderer {
     private volatile int gen;
     private volatile boolean failed;
     private volatile boolean ready;
+    private long lastRequestNs;
 
     boolean failed() {
         return failed;
@@ -82,7 +83,10 @@ final class GolemRenderer {
     /** Asks for the picture at time t (ignored while the worker is still busy with the previous one). */
     void request(double t, float alpha) {
         if (!ready || failed) return;
+        long now = System.nanoTime();
+        if (now - lastRequestNs < 14_000_000L) return;       // about 70 pictures a second is plenty and spares a CPU core
         if (!busy.compareAndSet(false, true)) return;
+        lastRequestNs = now;
         final int myGen = gen;
         try {
             pool.execute(() -> {
