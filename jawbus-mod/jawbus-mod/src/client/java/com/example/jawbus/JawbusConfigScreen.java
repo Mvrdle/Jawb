@@ -58,9 +58,9 @@ public final class JawbusConfigScreen extends Screen {
         this.addRenderableWidget(Button.builder(Component.literal("Move animation..."), b ->
                         net.minecraft.client.Minecraft.getInstance().gui.setScreen(new PositionScreen(this)))
                 .pos(lx, y + step * 6).size(colW, bh).build());
-        this.addRenderableWidget(Button.builder(detailLabel(c.detail), b -> {
-            c.detail = (c.detail + 2) % 3;                 // High -> Medium -> Low -> High
-            b.setMessage(detailLabel(c.detail));
+        this.addRenderableWidget(Button.builder(detailLabel(c.detailMode), b -> {
+            c.detailMode = c.detailMode == 3 ? 2 : c.detailMode == 0 ? 3 : c.detailMode - 1;   // Auto, High, Medium, Low, Auto...
+            b.setMessage(detailLabel(c.detailMode));
         }).pos(rx, y + step * 7).size(colW, bh).build());
         this.addRenderableWidget(Button.builder(Component.literal("Timings..."), b ->
                         net.minecraft.client.Minecraft.getInstance().gui.setScreen(new TimingScreen(this)))
@@ -92,7 +92,7 @@ public final class JawbusConfigScreen extends Screen {
     }
 
     private static Component detailLabel(int d) {
-        return Component.literal("Animation detail: " + (d == 2 ? "High" : d == 1 ? "Medium" : "Low"));
+        return Component.literal("Animation detail: " + (d == 3 ? "Auto" : d == 2 ? "High" : d == 1 ? "Medium" : "Low"));
     }
 
     private static Component label(String name, boolean on) {
