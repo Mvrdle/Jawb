@@ -67,6 +67,15 @@ public final class JawbusSlotMachine implements ClientModInitializer {
                                             KillTracker.simulate(IntegerArgumentType.getInteger(ctx, "scenario"));
                                             return 1;
                                         })))
+                        .then(ClientCommands.literal("kills")
+                                .then(ClientCommands.argument("total", IntegerArgumentType.integer(0, 100_000_000))
+                                        .executes(ctx -> {
+                                            int n = IntegerArgumentType.getInteger(ctx, "total");
+                                            Stats.syncKills(n);
+                                            ctx.getSource().sendFeedback(Component.literal("Total Lord Jawbus kills set to " + n
+                                                    + ". New kills are added on top."));
+                                            return 1;
+                                        })))
                         .then(ClientCommands.literal("textures")
                                 .executes(ctx -> {
                                     Icons.refresh();
