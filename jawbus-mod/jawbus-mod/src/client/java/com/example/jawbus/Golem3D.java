@@ -18,7 +18,8 @@ import java.util.Random;
  * Everything is a pure function of time, so frames can be drawn in any order (also used by the offline test).
  */
 final class Golem3D {
-    static final int FW = 192, FH = 144;
+    static final int FW = 288, FH = 216;
+    static final double RES = FW / 192.0;
     private static final double TEXEL = 0.5;
 
     // joints
@@ -177,9 +178,13 @@ final class Golem3D {
 
     private static final class Model {
         final List<Chunk> chunks = new ArrayList<>();
+        final List<Chunk> props = new ArrayList<>();   // scenery: basalt slabs around the stage
+        private List<Chunk> target;
+        private int part;
         final boolean[] ready = new boolean[4];
 
         Model() {
+            target = chunks;
             // torso 18x12x11 in a 3x2x2 grid; head 8x10x8 in 2x2x2; arms 4x30x6 in 3; legs in two pieces each
             grid(TORSO, 0, -9, 9, 21, 33, -5.5, 5.5, 3, 2, 2, 2);
             grid(ROOT, 0, -4.5, 4.5, 16, 21, -3, 3, 1, 1, 1, 3);
@@ -195,10 +200,26 @@ final class Golem3D {
             for (Chunk c : chunks) {
                 if ((c.joint == ARM_A || c.joint == ARM_B) && c.cy > 22) c.minTier = 2;
             }
+            // basalt slabs around the stage (never animated, never launched)
+            target = props;
+            part = 8;
+            double[][] slabs = {{-54, -36, 0, 12, -6, 10}, {-47, -35, 0, 6, 8, 20}, {38, 54, 0, 14, -10, 6},
+                    {34, 46, 0, 6, 10, 22}, {-26, -10, 0, 7, -28, -16}, {14, 30, 0, 9, -32, -18}};
+            for (double[] sl : slabs) grid(ROOT, 0, sl[0], sl[1], sl[2], sl[3], sl[4], sl[5], 1, 1, 1, 9);
+            target = chunks;
         }
 
         private void grid(int joint, int region, double x0, double x1, double y0, double y1, double z0, double z1,
                           int nx, int ny, int nz, int minTier) {
+            if (target == chunks) part = switch (joint) {
+                case TORSO -> 0;
+                case ROOT -> 1;
+                case HEAD -> region == 2 ? 3 : 2;
+                case ARM_A -> 4;
+                case ARM_B -> 5;
+                case UL_A, LL_A -> 6;
+                default -> 7;
+            };
             double dx = (x1 - x0) / nx, dy = (y1 - y0) / ny, dz = (z1 - z0) / nz;
             for (int ix = 0; ix < nx; ix++) {
                 for (int iy = 0; iy < ny; iy++) {
@@ -216,7 +237,7 @@ final class Golem3D {
                         c.faces[3] = face(0, -1, ax, bx, ay, by, az, bz, ix == 0, region);
                         c.faces[4] = face(1, 1, ax, bx, ay, by, az, bz, iy == ny - 1, region);
                         c.faces[5] = face(1, -1, ax, bx, ay, by, az, bz, iy == 0, region);
-                        chunks.add(c);
+                        target.add(c);
                     }
                 }
             }
@@ -253,9 +274,10 @@ final class Golem3D {
                     double py = f.o[1] + f.u[1] * a + f.v[1] * b;
                     double pz = f.o[2] + f.u[2] * a + f.v[2] * b;
                     int idx = j * f.tw + i;
-                    f.base[idx] = stone(px, py, pz, region, i, j);
+                    f.base[idx] = skinned(px, py, pz, axis, sign, region);
                     if (region == 1 && axis == 2 && sign > 0 && py > 37.1 && py < 39.0 && Math.abs(px) > 0.9 && Math.abs(px) < 3.3) {
                         f.eye[idx] = true;
+                        if (SKIN == null) f.base[idx] = 0x2E2724;
                     }
                 }
             }
@@ -278,7 +300,79 @@ final class Golem3D {
             f.n[2] = nz;
         }
 
-        // ---- procedural material: dark basalt + iron plates ----
+        // ---- vanilla Iron Golem layout: the model boxes (x0,x1,y0,y1,z0,z1) and their texture origin / size ----
+        // part: 0 body, 1 waist, 2 head, 3 nose, 4 right arm, 5 left arm, 6 right leg, 7 left leg
+        private static final double[][] PART_BOX = {
+                {-9, 9, 21, 33, -5.5, 5.5, 0, 40, 18, 12, 11},
+                {-4.5, 4.5, 16, 21, -3, 3, 0, 70, 9, 5, 6},
+                {-4, 4, 33, 43, -3, 5, 0, 0, 8, 10, 8},
+                {-1, 1, 35.5, 39.5, 5, 7, 24, 0, 2, 4, 2},
+                {-13, -9, 2, 32, -3, 3, 60, 21, 4, 30, 6},
+                {9, 13, 2, 32, -3, 3, 60, 58, 4, 30, 6},
+                {-7.5, -1.5, 0, 16, -2.5, 2.5, 37, 0, 6, 16, 5},
+                {1.5, 7.5, 0, 16, -2.5, 2.5, 60, 0, 6, 16, 5}};
+
+        /** Colour of a model-space point on a face: the real texture if we have it, else a vanilla-like palette. */
+        private int skinned(double x, double y, double z, int axis, int sign, int region) {
+            if (part == 8) return basalt(x, y, z, axis, sign);
+            int[] sk = SKIN;
+            if (sk == null) return vanillaLike(x, y, z, axis, sign);
+            double[] b = PART_BOX[part];
+            double tu = b[6], tv = b[7], w = b[8], h = b[9], d = b[10];
+            double u0, v0, rw, rh, pu, pv;
+            if (axis == 2 && sign > 0) {            // front (the face the camera sees)
+                u0 = tu + d; v0 = tv + d; rw = w; rh = h; pu = u0 + (x - b[0]); pv = v0 + (b[3] - y);
+            } else if (axis == 2) {                 // back
+                u0 = tu + 2 * d + w; v0 = tv + d; rw = w; rh = h; pu = u0 + (b[1] - x); pv = v0 + (b[3] - y);
+            } else if (axis == 0 && sign > 0) {     // +x side
+                u0 = tu + d + w; v0 = tv + d; rw = d; rh = h; pu = u0 + (b[5] - z); pv = v0 + (b[3] - y);
+            } else if (axis == 0) {                 // -x side
+                u0 = tu; v0 = tv + d; rw = d; rh = h; pu = u0 + (z - b[4]); pv = v0 + (b[3] - y);
+            } else if (sign > 0) {                  // top
+                u0 = tu + d; v0 = tv; rw = w; rh = d; pu = u0 + (x - b[0]); pv = v0 + (z - b[4]);
+            } else {                                // bottom
+                u0 = tu + d + w; v0 = tv; rw = w; rh = d; pu = u0 + (x - b[0]); pv = v0 + (b[5] - z);
+            }
+            pu = Math.min(u0 + rw - 1e-3, Math.max(u0, pu));
+            pv = Math.min(v0 + rh - 1e-3, Math.max(v0, pv));
+            int ix = Math.min(SKIN_W - 1, (int) (pu * SKIN_W / 128.0));
+            int iy = Math.min(SKIN_H - 1, (int) (pv * SKIN_H / 128.0));
+            return sk[iy * SKIN_W + ix] & 0xFFFFFF;
+        }
+
+        private int basalt(double x, double y, double z, int axis, int sign) {
+            double[] q = {x, y, z};
+            q[axis] -= sign * 0.01;
+            int cx = (int) Math.floor(q[0] / 2), cy = (int) Math.floor(q[1] / 2), cz = (int) Math.floor(q[2] / 2);
+            double r = h3(cx, cy, cz, 29);
+            return r < 0.3 ? 0x2A2630 : r < 0.75 ? 0x363140 : r < 0.93 ? 0x463F52 : 0x5B5468;
+        }
+
+        /** Fallback when the game texture cannot be read: pale grey iron, dark hands and feet, green vines, tan nose. */
+        private int vanillaLike(double x, double y, double z, int axis, int sign) {
+            double[] q = {x, y, z};
+            q[axis] -= sign * 0.01;                 // step just inside the box so the cell is well defined
+            int cx = (int) Math.floor(q[0]), cy = (int) Math.floor(q[1]), cz = (int) Math.floor(q[2]);
+            double r = h3(cx, cy, cz, 11);
+            double n = fbm(q[0] * 0.17, q[1] * 0.17, q[2] * 0.17);
+            double tone = clamp01(0.5 * n + 0.9 * (r - 0.5) * 0.55 + 0.35);
+            int lv = (int) Math.round(tone * 3);   // 4 flat shades: pixel-art look
+            int c = lv <= 0 ? 0x77736B : lv == 1 ? 0xA09B91 : lv == 2 ? 0xBDB8AD : 0xCFCAC0;
+            if (part == 3) {
+                c = r < 0.4 ? 0x8E613F : r < 0.8 ? 0xA27248 : 0xB58558;
+            } else {
+                double low = part >= 6 ? (y < 5 ? 1 : 0) : (part >= 4 ? (y < 9 ? 1 : 0) : 0);
+                if (low > 0) c = r < 0.5 ? 0x5C5852 : 0x6E6A63;
+                if (part != 2 && part != 1) {
+                    double vine = noise3(q[0] * 0.23 + 3, q[1] * 0.23 + 1, q[2] * 0.23 + 8);
+                    if (vine > 0.70) c = r < 0.5 ? 0x4C7B30 : 0x3B6828;
+                }
+                if (part == 2 && y < 34.2) c = mixRgb(c, 0x77736B, 0.5);   // jaw shadow
+            }
+            return c;
+        }
+
+        // ---- (old) procedural material: dark basalt + iron plates, no longer used ----
 
         private static int stone(double x, double y, double z, int region, int ti, int tj) {
             double n = fbm(x * 0.55, y * 0.55, z * 0.55);
@@ -414,6 +508,23 @@ final class Golem3D {
     }
 
     private static Model model;
+    private static volatile int[] SKIN;          // ARGB pixels of the vanilla Iron Golem texture (128x128 layout), or null
+    private static volatile int SKIN_W, SKIN_H;
+    static volatile int skinVersion;
+
+    /** Gives the model the real vanilla Iron Golem texture (128x128, or a multiple of it from a resource pack). */
+    static synchronized void setSkin(int[] argb, int w, int h) {
+        if (argb == null || w < 128 || w % 128 != 0 || h != w || argb.length < w * h) return;
+        SKIN = argb;
+        SKIN_W = w;
+        SKIN_H = h;
+        model = null;                            // rebuilt with the new texture on next use
+        skinVersion++;
+    }
+
+    static boolean hasSkin() {
+        return SKIN != null;
+    }
 
     private static synchronized Model model() {
         if (model == null) model = new Model();
@@ -778,7 +889,7 @@ final class Golem3D {
 
     private void setupCamera(Pose p) {
         cam = mul(rotX(p.pitch), mul(rotY(p.yaw), trans(0, -p.tgy, -p.tgz)));
-        camF = CAM_F * p.zoom;
+        camF = CAM_F * RES * p.zoom;
     }
 
     private double[] project(double[] camPt) {
@@ -834,6 +945,13 @@ final class Golem3D {
         Model m = model();
 
         drawShadow(p, t);
+        double heatKeep = curHeat;
+        curHeat = heatKeep * 0.3;
+        for (Chunk c : m.props) {
+            curCore = 0;
+            drawChunk(c, cam, false, 1.0);
+        }
+        curHeat = heatKeep;
 
         for (int i = 0; i < m.chunks.size(); i++) {
             Chunk c = m.chunks.get(i);
@@ -851,23 +969,44 @@ final class Golem3D {
                 double[] cw = new double[3];
                 apply(wf, c.cx, c.cy, c.cz, cw);
                 double[] v = vel[i];
-                double px = v[0] * tau, py = v[1] * tau - 60 * tau * tau, pz = v[2] * tau;
-                double[] rot = rotXYZ(spin[i][0] * tau, spin[i][1] * tau, spin[i][2] * tau);
+                // fly, land on the ground (y = 2.6), slide a little and settle into a resting cube pose
+                double rest = 2.6 - cw[1];
+                double disc = v[1] * v[1] - 240 * rest;
+                double tLand = disc < 0 ? 0 : Math.max(0, (v[1] + Math.sqrt(disc)) / 120.0);
+                double px, py, pz;
+                double[] ang = new double[3];
+                if (tau <= tLand) {
+                    px = v[0] * tau;
+                    py = v[1] * tau - 60 * tau * tau;
+                    pz = v[2] * tau;
+                    for (int k = 0; k < 3; k++) ang[k] = spin[i][k] * tau;
+                } else {
+                    double d = tau - tLand, slide = (1 - Math.exp(-7 * d)) / 7.0;
+                    px = v[0] * (tLand + slide);
+                    py = rest;
+                    pz = v[2] * (tLand + slide);
+                    double sb = ease(d / 0.25);
+                    for (int k = 0; k < 3; k++) {
+                        double a0 = spin[i][k] * tLand, a1 = Math.round(a0 / (Math.PI / 2)) * (Math.PI / 2);
+                        ang[k] = a0 + (a1 - a0) * sb;
+                    }
+                }
+                double[] rot = rotXYZ(ang[0], ang[1], ang[2]);
                 double[] mm = mul(trans(cw[0] + px, cw[1] + py, cw[2] + pz), mul(rot, mul(trans(-cw[0], -cw[1], -cw[2]), wf)));
-                double life = tier == 3 ? 2.1 : 1.7;
-                double alpha = 1 - ease((tau - life * 0.55) / (life * 0.45));
+                double alpha = 1 - ease((tau - 3.4) / 1.0);
                 if (alpha <= 0.04) continue;
                 double[] mc = mul(cam, mm);
                 double[] q = new double[3];
                 apply(mc, c.cx, c.cy, c.cz, q);
                 double[] s = project(q);
-                double edge = Math.min(Math.min(s[0], FW - s[0]) / 22.0, Math.min(s[1], FH - s[1]) / 18.0);
+                double edge = Math.min(Math.min(s[0], FW - s[0]) / (22.0 * RES), Math.min(s[1], FH - s[1]) / (18.0 * RES));
                 alpha *= clamp01(edge);
                 if (alpha <= 0.04) continue;
-                curCore = Math.exp(-tau * (tier == 3 ? 0.9 : 1.3)) * (0.55 + 0.45 * Math.min(1, p.heat + 0.2));
+                curCore = Math.max(0.3, Math.exp(-tau * (tier == 3 ? 0.9 : 1.3)) * (0.55 + 0.45 * Math.min(1, p.heat + 0.2)));
                 drawChunk(c, mc, true, alpha);
             }
         }
+        outline();
         for (Chip c : chips) drawChip(c, t);
         bloom(p);
         float[] ch = chestAt(t);
@@ -875,13 +1014,60 @@ final class Golem3D {
         chestFy = ch[1];
     }
 
+    private final byte[] edgeA = new byte[FW * FH];
+    private static final int OUTLINE = 3;          // outer outline thickness in framebuffer pixels
+    private static final int OUTLINE_RGB = 0x0E0A0A;
+
+    /** Thick cartoon outline around the whole silhouette, and a thin one where one part passes in front of another. */
+    private void outline() {
+        java.util.Arrays.fill(edgeA, (byte) 0);
+        for (int y = 1; y < FH - 1; y++) {
+            for (int x = 1; x < FW - 1; x++) {
+                int i = y * FW + x;
+                float z = zbuf[i];
+                if (z <= 0 || emis[i] >= 0.45f) continue;
+                if (zbuf[i - 1] > z * 1.03f || zbuf[i + 1] > z * 1.03f || zbuf[i - FW] > z * 1.03f || zbuf[i + FW] > z * 1.03f) {
+                    edgeA[i] = (byte) 255;
+                }
+            }
+        }
+        int r2 = OUTLINE * OUTLINE + 1;
+        for (int y = 0; y < FH; y++) {
+            for (int x = 0; x < FW; x++) {
+                int i = y * FW + x;
+                if (zbuf[i] <= 0) continue;
+                boolean boundary = x == 0 || y == 0 || x == FW - 1 || y == FH - 1
+                        || zbuf[i - 1] <= 0 || zbuf[i + 1] <= 0 || zbuf[i - FW] <= 0 || zbuf[i + FW] <= 0;
+                if (!boundary) continue;
+                int al = pix[i] >>> 24;
+                for (int dy = -OUTLINE; dy <= OUTLINE; dy++) {
+                    int yy = y + dy;
+                    if (yy < 0 || yy >= FH) continue;
+                    for (int dx = -OUTLINE; dx <= OUTLINE; dx++) {
+                        int xx = x + dx;
+                        if (xx < 0 || xx >= FW || dx * dx + dy * dy > r2) continue;
+                        int j = yy * FW + xx;
+                        if (zbuf[j] > 0) continue;
+                        if ((edgeA[j] & 255) < al) edgeA[j] = (byte) al;
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < FW * FH; i++) {
+            int al = edgeA[i] & 255;
+            if (al == 0) continue;
+            if (zbuf[i] > 0) al = Math.max(al, pix[i] >>> 24);
+            pix[i] = (al << 24) | OUTLINE_RGB;
+        }
+    }
+
     float chestFx = FW / 2f, chestFy = FH / 2f;
 
+    /** The lit ground disc the golem stands on: warm colour with a dithered edge (no soft gradient). */
     private void drawShadow(Pose p, double t) {
-        double rx = 12 + 8 * p.lying, rz = 7 + 16 * p.lying;
+        double rx = 31 + 8 * p.lying, rz = 18 + 16 * p.lying;
         double cz = 3 + 20 * p.lying;
-        if (tier >= 2 && t > burst) return;
-        int n = 28;
+        int n = 36;
         double[][] pts = new double[n][];
         double[] tmp = new double[3];
         for (int i = 0; i < n; i++) {
@@ -894,6 +1080,7 @@ final class Golem3D {
             minY = Math.min(minY, q[1]);
             maxY = Math.max(maxY, q[1]);
         }
+        int band = (int) Math.round(5 * RES);
         for (int y = Math.max(0, (int) Math.floor(minY)); y <= Math.min(FH - 1, (int) Math.ceil(maxY)); y++) {
             double yy = y + 0.5, xl = 1e9, xr = -1e9;
             for (int i = 0; i < n; i++) {
@@ -904,8 +1091,11 @@ final class Golem3D {
                     xr = Math.max(xr, x);
                 }
             }
+            boolean capRow = yy - minY < band || maxY - yy < band;
             for (int x = Math.max(0, (int) Math.ceil(xl - 0.5)); x <= Math.min(FW - 1, (int) Math.floor(xr - 0.5)); x++) {
-                pix[y * FW + x] = 0x66000000;
+                boolean edge = capRow || x - xl < band || xr - x < band;
+                if (edge && ((x + y) & 1) == 1) continue;             // checkerboard dither on the rim
+                pix[y * FW + x] = 0x80F0B070;
             }
         }
     }
@@ -937,7 +1127,7 @@ final class Golem3D {
         double[] q = new double[3];
         apply(mc, 0, 0, 0, q);
         double[] s = project(q);
-        double edge = Math.min(Math.min(s[0], FW - s[0]) / 14.0, Math.min(s[1], FH - s[1]) / 12.0);
+        double edge = Math.min(Math.min(s[0], FW - s[0]) / (14.0 * RES), Math.min(s[1], FH - s[1]) / (12.0 * RES));
         alpha *= clamp01(edge);
         if (alpha <= 0.04) return;
         for (Face face : CUBE) {
@@ -963,7 +1153,8 @@ final class Golem3D {
         if (nq[0] * vx + nq[1] * vy + nq[2] * vz <= 0) return;
         if (CAM_D - q0[2] < 8 || CAM_D - q1[2] < 8 || CAM_D - q2[2] < 8 || CAM_D - q3[2] < 8) return;
         double[] s0 = project(q0), s1 = project(q1), s2 = project(q2), s3 = project(q3);
-        double shade = 0.46 + 0.62 * Math.max(0, nq[0] * lightDir[0] + nq[1] * lightDir[1] + nq[2] * lightDir[2]);
+        double lit = Math.max(0, nq[0] * lightDir[0] + nq[1] * lightDir[1] + nq[2] * lightDir[2]);
+        double shade = lit > 0.55 ? 1.06 : lit > 0.15 ? 0.84 : 0.62;     // three flat tones, no gradients
         tri(f, s0, s1, s2, 0, 0, 1, 0, 1, 1, shade, cutFace, alpha, flat, flatMode);
         tri(f, s0, s2, s3, 0, 0, 1, 1, 0, 1, shade, cutFace, alpha, flat, flatMode);
     }
@@ -1035,13 +1226,15 @@ final class Golem3D {
         lastEmis = 0f;
         rgb = mixRgb(rgb, 0xFF4A10, heat * wash * 0.5);
         if (f.eye[ti]) {
-            lastEmis = 0.8f;
-            return mixRgb(mixRgb(0xE0701A, 0xFFE08A, heat), 0xFFFFFF, curTier == 3 ? heat * heat * 0.8 : 0);
+            double hh = clamp01((heat - 0.1) * 1.3);
+            lastEmis = (float) (0.8 * hh);
+            int glow = mixRgb(mixRgb(0xE0701A, 0xFFE08A, heat), 0xFFFFFF, curTier == 3 ? heat * heat * 0.8 : 0);
+            return mixRgb(rgb, glow, hh);
         }
         double front = -1, halo = 0;
         for (int t = 1; t <= curTier; t++) {          // every stage reached so far contributes its cracks
             double g = curG[t - 1];
-            if (g <= 0) continue;
+            if (g <= 0 || f.crackT[t] == null) continue;
             if (f.crackT[t][ti] <= g) {
                 front = Math.max(front, clamp01(1 - (g - f.crackT[t][ti]) / 0.10));
             } else if (f.haloT[t][ti] <= g) {
@@ -1121,6 +1314,7 @@ final class Golem3D {
 
     /** Soft glow around the hot pixels, also spilling onto the empty background. */
     private void bloom(Pose p) {
+        if (true) return;                         // crisp flat style: no blur / glow haze
         double heat = p.heat;
         if (heat < 0.05) return;
         int r = curTier == 3 && heat > 0.8 ? 5 : 3;
