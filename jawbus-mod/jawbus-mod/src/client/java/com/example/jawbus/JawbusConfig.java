@@ -35,6 +35,14 @@ public final class JawbusConfig {
     /** Where the animation sits: offset from the screen centre as a fraction of the screen (drag it in the menu). */
     public float offsetX = 0f;
     public float offsetY = 0f;
+    /** Build-up speed: how fast each crack stage plays (2.0 = twice as fast, 0.5 = half speed). */
+    public float buildSpeed = 1.0f;
+    /** Length of the still pauses between stages (0.2 = barely a beat, 2.5 = long suspense). */
+    public float pauseScale = 1.0f;
+    /** How long the golem holds, almost frozen, right before it pops. */
+    public float finalHold = 1.0f;
+    /** How long the reward stays on screen after it lands. */
+    public float rewardTime = 1.0f;
     /** Chat lines explaining what the mod saw (useful while tuning). */
     public boolean debug = true;
 
@@ -85,6 +93,10 @@ public final class JawbusConfig {
         scale = c(scale, 0.5f, 1.5f);
         duration = c(duration, 0.6f, 2.0f);
         opacity = c(opacity, 0.2f, 1.0f);
+        buildSpeed = c(buildSpeed, 0.5f, 2.0f);
+        pauseScale = c(pauseScale, 0.2f, 2.5f);
+        finalHold = c(finalHold, 0.3f, 2.5f);
+        rewardTime = c(rewardTime, 0.5f, 3.0f);
         regularVolume = c(regularVolume, 0f, 1.5f);
         jackpotVolume = c(jackpotVolume, 0f, 1.5f);
         shakeIntensity = c(shakeIntensity, 0f, 1.5f);
