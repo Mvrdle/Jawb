@@ -97,6 +97,7 @@ final class KillTracker {
         if (!SIM.isEmpty()) runSim();
         if (tick % 4 == 0) scan(mc);
         if (tick % 5 == 0) pollInventory(mc);
+        if (tick % 10 == 0) pollBestiary(mc);
         try {
             LEDGER.tick(tick);
         } catch (RuntimeException ex) {
@@ -168,6 +169,47 @@ final class KillTracker {
             List<Reward> rs = Reward.findAll(line);
             if (!rs.isEmpty()) LEDGER.onChat(tick, rs, sim);
         }
+    }
+
+    /**
+     * While you have a container open (for example the Bestiary), look for the "Lord Jawbus" entry and take the kill
+     * count from its tooltip. This only reads items already on your screen; it sends nothing to the server.
+     */
+    private static void pollBestiary(Minecraft mc) {
+        try {
+            var menu = mc.player.containerMenu;
+            if (menu == null || menu == mc.player.inventoryMenu) return;
+            for (var slot : menu.slots) {
+                ItemStack s = slot.getItem();
+                if (s.isEmpty()) continue;
+                String name = s.getHoverName().getString();
+                if (!Bestiary.isJawbusEntry(name)) continue;
+                int kills = Bestiary.parseKills(name, loreLines(s));
+                if (kills < 0) continue;
+                if (kills != Stats.get().totalKills()) {
+                    Stats.syncKills(kills);
+                    debug("Synced total kills from the Bestiary: " + kills);
+                }
+                return;
+            }
+        } catch (Throwable ex) {
+            // a menu in an odd state must never disturb the game
+        }
+    }
+
+    private static List<String> loreLines(ItemStack s) {
+        List<String> out = new ArrayList<>();
+        try {
+            Object lore = s.get(net.minecraft.core.component.DataComponents.LORE);
+            if (lore == null) return out;
+            Object lines = lore.getClass().getMethod("lines").invoke(lore);
+            if (lines instanceof List<?> l) {
+                for (Object o : l) out.add(o instanceof Component c ? c.getString() : String.valueOf(o));
+            }
+        } catch (Throwable ignored) {
+            // no readable tooltip: the manual sync still works
+        }
+        return out;
     }
 
     /** Known rewards newly appearing in the inventory count as evidence while a kill is open. */
