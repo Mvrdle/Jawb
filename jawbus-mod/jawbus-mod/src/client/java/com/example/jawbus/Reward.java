@@ -13,7 +13,6 @@ public enum Reward {
     // chances (percent) are the base drop table from the wiki: normal kill / loot share; NaN = not listed there
     SILVER_MAGMAFISH("Silver Magmafish", Rarity.EPIC, 1, 1, "silver magmafish", 100, 100),
     MAGMA_LORD_FRAGMENT("Magma Lord Fragment", Rarity.LEGENDARY, 2, 2, "magma lord fragment", 100, 20),
-    LORD_JAWBUS_SHARD("Lord Jawbus Shard", Rarity.LEGENDARY, 2, 3, "lord jawbus shard", Double.NaN, Double.NaN),
     BOBBIN_SCRIPTURES("Bobbin' Scriptures", Rarity.RARE, 3, 4, "bobbin scriptures", 4, Double.NaN),
     CARMINE_DYE("Carmine Dye", Rarity.DIVINE, 3, 6, "carmine dye", 0.0004, Double.NaN),
     RADIOACTIVE_VIAL("Radioactive Vial", Rarity.MYTHIC, 3, 5, "radioactive vial", 0.5, 0.06);
@@ -51,6 +50,11 @@ public enum Reward {
         this.tier = tier;
         this.priority = priority;
         this.key = key;
+    }
+
+    /** Base drop chance in percent for a normal kill (NaN when the wiki table does not list it). */
+    public double killChance() {
+        return killChance;
     }
 
     /** "0.5%  (1 in 200)" for the normal-kill or loot-share table, or null when the wiki table does not list it. */
