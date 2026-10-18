@@ -808,7 +808,21 @@ final class Golem3D {
         return c;
     }
 
+    private static final Object LOCK = new Object();   // the model cache is shared, so only one golem builds or draws at a time
+
     void begin(int tier, boolean vial, long seed, double[] cs, double[] ce, double burst) {
+        synchronized (LOCK) {
+            beginImpl(tier, vial, seed, cs, ce, burst);
+        }
+    }
+
+    void draw(double t) {
+        synchronized (LOCK) {
+            drawImpl(t);
+        }
+    }
+
+    private void beginImpl(int tier, boolean vial, long seed, double[] cs, double[] ce, double burst) {
         this.tier = Math.max(1, Math.min(3, tier));
         this.vial = vial;
         this.stages = this.tier < 3 ? this.tier : (vial && cs.length >= 4 ? 4 : 3);
@@ -970,7 +984,7 @@ final class Golem3D {
         return new double[]{x / l, y / l, z / l};
     }
 
-    void draw(double t) {
+    private void drawImpl(double t) {
         java.util.Arrays.fill(pix, 0);
         java.util.Arrays.fill(zbuf, 0f);
         java.util.Arrays.fill(emis, 0f);
@@ -1306,9 +1320,14 @@ final class Golem3D {
     private final int[] openPrev = new int[FW + 1], openCur = new int[FW + 1];
 
     /** Slightly coarser colours (steps of 12) so that neighbouring pixels merge into longer rectangles. */
-    private static int qStep = 12;
+    /** How many rectangles a picture may use before colours are merged more coarsely (set from the detail setting). */
+    static volatile int rectBudget = 2200;
+    /** 1 = every pixel, 2 = 2x2 blocks (about a quarter of the rectangles, chunkier look). */
+    static volatile int blockSize = 1;
 
-    private static int quant(int a, int c) {
+    private int qStep = 12;
+
+    private int quant(int a, int c) {
         int q = qStep;
         int r = ((c >> 16) & 255) / q * q, g = ((c >> 8) & 255) / q * q, b = (c & 255) / q * q;
         return ((a / 16 * 16 + 8) << 24) | (r << 16) | (g << 8) | b;
@@ -1319,14 +1338,29 @@ final class Golem3D {
         qStep = 12;
         buildRectsPass(alphaMul);
         // the burst frames are the busiest: merge more aggressively there so the GUI never has to draw thousands of rects
-        if (rectCount > 3000) {
+        int budget = rectBudget;
+        if (rectCount > budget) {
             qStep = 24;
             buildRectsPass(alphaMul);
         }
-        if (rectCount > 4500) {
+        if (rectCount > budget * 1.45) {
             qStep = 40;
             buildRectsPass(alphaMul);
         }
+        if (rectCount > budget * 2.2) {
+            qStep = 64;
+            buildRectsPass(alphaMul);
+        }
+    }
+
+    /** Pixel (x, y), snapped to the top-left of its block when a coarser block size is selected. */
+    private int sample(int x, int y) {
+        int b = blockSize;
+        if (b > 1) {
+            x -= x % b;
+            y -= y % b;
+        }
+        return pix[y * FW + x];
     }
 
     private void buildRectsPass(float alphaMul) {
@@ -1336,7 +1370,7 @@ final class Golem3D {
             java.util.Arrays.fill(openCur, -1);
             int x = 0;
             while (x < FW) {
-                int c = pix[y * FW + x];
+                int c = sample(x, y);
                 int a = (int) ((c >>> 24) * alphaMul);
                 if (a < 6) {
                     x++;
@@ -1345,7 +1379,7 @@ final class Golem3D {
                 int col = quant(a, c);
                 int x2 = x + 1;
                 while (x2 < FW) {
-                    int c2 = pix[y * FW + x2];
+                    int c2 = sample(x2, y);
                     int a2 = (int) ((c2 >>> 24) * alphaMul);
                     if (quant(a2, c2) != col) break;
                     x2++;
