@@ -472,9 +472,8 @@ public final class Cinematic {
         float sf = h * 0.80f * cfg.scale / Golem3D.FH;               // 3D framebuffer pixel -> GUI pixel
         float fox = cx - Golem3D.FW * sf / 2f;
         float foy = h * 0.50f + oyShift - Golem3D.FH * 0.52f * sf;
-        boolean vg = VanillaGolem.enabled() && mc.level != null;      // the real vanilla Iron Golem entity
-        float chestX = vg ? cx : fox + p.chest[0] * sf;
-        int chestY = vg ? Math.round(h * 0.5f + oyShift - h * 0.80f * cfg.scale * 0.06f) : Math.round(foy + p.chest[1] * sf);
+        float chestX = fox + p.chest[0] * sf;
+        int chestY = Math.round(foy + p.chest[1] * sf);
         boolean vial = p.reward.maxIntensity();
 
         // soft dim behind everything (never fully opaque, and it fades out with the animation)
@@ -482,9 +481,7 @@ public final class Cinematic {
         g.fill(0, 0, w, h, argb(0x000000, a * dim[tier - 1]));
 
         // ---- the 3D golem (software-rendered, painted as merged rectangles) ----
-        boolean drewVanilla = vg && VanillaGolem.drawAt(g, tier, t, tl.cs(), tl.ce(), tl.burst(), cx,
-                h / 2 + oyShift, h, cfg.scale);
-        if (!drewVanilla && p.g3ok) {
+        if (p.g3ok) {
             try {
                 G3.draw(t);
                 G3.buildRects((tier == 1 && t > tl.itemDone()) ? a * 0.6f : a);
@@ -581,12 +578,6 @@ public final class Cinematic {
         float sf = h * 0.80f * cfg.scale / Golem3D.FH;
         float fox = cx - Golem3D.FW * sf / 2f;
         float foy = h * 0.50f + Math.round(cfg.offsetY * h) - Golem3D.FH * 0.52f * sf;
-        if (VanillaGolem.enabled() && Minecraft.getInstance().level != null
-                && VanillaGolem.drawStatic(g, cx, h / 2 + Math.round(cfg.offsetY * h), h, cfg.scale)) {
-            frame(g, Math.round(fox + Golem3D.FW * sf * 0.10f), Math.round(foy + 8 * sf),
-                    Math.round(fox + Golem3D.FW * sf * 0.90f), Math.round(foy + (Golem3D.FH - 4) * sf), 1, 0xCCFFAA00);
-            return;
-        }
         try {
             ensureSkin();
             if (editorG3 == null || editorVer != Golem3D.skinVersion) {
