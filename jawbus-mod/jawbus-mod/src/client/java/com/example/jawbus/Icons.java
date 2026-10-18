@@ -27,8 +27,6 @@ final class Icons {
 
     private static final String TEX_CARMINE =
             "ewogICJ0aW1lc3RhbXAiIDogMTc0MTE2MDk2ODI0MiwKICAicHJvZmlsZUlkIiA6ICJiMzMwZWE4OWE3MTY0OWZjYTMwZmI5ZjU5MTQ5ZjNjMCIsCiAgInByb2ZpbGVOYW1lIiA6ICJUQUxLX0FMT1RfIiwKICAic2lnbmF0dXJlUmVxdWlyZWQiIDogdHJ1ZSwKICAidGV4dHVyZXMiIDogewogICAgIlNLSU4iIDogewogICAgICAidXJsIiA6ICJodHRwOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlLzgxNTBiNDJlNjQ5NzEzNzIxN2Q1ZDhmNTY1MDNmOThkOGY1NDljYjAzNGZiZWFlNmZkZDU0MzE1NzA1MThlMzgiLAogICAgICAibWV0YWRhdGEiIDogewogICAgICAgICJtb2RlbCIgOiAic2xpbSIKICAgICAgfQogICAgfQogIH0KfQ==";
-    private static final String TEX_SHARD =
-            "ewogICJ0aW1lc3RhbXAiIDogMTczMDMyMTE2NTcyNywKICAicHJvZmlsZUlkIiA6ICIzZDIxZTYyMTk2NzQ0Y2QwYjM3NjNkNTU3MWNlNGJlZSIsCiAgInByb2ZpbGVOYW1lIiA6ICJTcl83MUJsYWNrYmlyZCIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS9hMGRiYjUwOTNhM2Y5ZDc3MGU4ZGE0ZDk3Njc1YzdjYTI2YjA2MzhmMmRhM2EzYjY1NmY3Y2NhZDVjMTk4YjcxIgogICAgfQogIH0KfQ==";
     private static final String TEX_VIAL =
             "ewogICJ0aW1lc3RhbXAiIDogMTYxMDA0OTczMzc3OSwKICAicHJvZmlsZUlkIiA6ICIxOTI1MjFiNGVmZGI0MjVjODkzMWYwMmE4NDk2ZTExYiIsCiAgInByb2ZpbGVOYW1lIiA6ICJTZXJpYWxpemFibGUiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWI1NzRjMDNiMWM4ZjUyNTM1Zjk2YTIwYTQxNzYwMjBiYjI4MGUwYWY1MmZjMTI4NWQzZWNiZDM1MTcyODBjNCIKICAgIH0KICB9Cn0=";
 
@@ -73,7 +71,6 @@ final class Icons {
         return switch (r) {
             case SILVER_MAGMAFISH -> Items.COD;
             case MAGMA_LORD_FRAGMENT -> Items.MAGMA_CREAM;
-            case LORD_JAWBUS_SHARD -> Items.NETHERITE_SCRAP;
             case BOBBIN_SCRIPTURES -> Items.ENCHANTED_BOOK;
             case CARMINE_DYE -> Items.REDSTONE;
             case RADIOACTIVE_VIAL -> Items.EXPERIENCE_BOTTLE;
@@ -84,8 +81,6 @@ final class Icons {
         switch (r) {
             case CARMINE_DYE:
                 return head(TEX_CARMINE);
-            case LORD_JAWBUS_SHARD:
-                return head(TEX_SHARD);
             case RADIOACTIVE_VIAL:
                 return head(TEX_VIAL);
             default:
