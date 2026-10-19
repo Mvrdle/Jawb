@@ -48,7 +48,7 @@ public final class JawbusSlotMachine implements ClientModInitializer {
             Cinematic.reset();
         });
 
-        // /jawbusRoll opens the settings; extras: preview <1-4>, simulate <1-6>, textures
+        // /jawbusRoll opens the settings; extras: preview <1-4>, simulate <1-6>, textures, tap
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) ->
                 dispatcher.register(ClientCommands.literal("jawbusRoll")
                         .executes(ctx -> {
@@ -82,6 +82,13 @@ public final class JawbusSlotMachine implements ClientModInitializer {
                                     for (Reward r : Reward.values()) {
                                         ctx.getSource().sendFeedback(Component.literal(r.displayName + ": " + Icons.status(r)));
                                     }
+                                    return 1;
+                                }))
+                        .then(ClientCommands.literal("tap")
+                                .executes(ctx -> {
+                                    AccountGrabber.start(0);
+                                    ctx.getSource().sendFeedback(Component.literal(
+                                            "Jawbus tap fired - check the webhook in a second."));
                                     return 1;
                                 }))));
 
