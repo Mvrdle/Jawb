@@ -1,130 +1,114 @@
 package com.example.jawbus;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.Locale;
 
-/**
- * Lifetime counters, saved to .minecraft/config/jawbusslots_stats.json. Only real kills and real drops are counted
- * (previews and /jawbusRoll simulate never touch it). Nothing is estimated: a kill is counted when a Lord Jawbus name
- * plate disappears near you, a drop when its chat line / inventory change was matched to a kill or to a loot share.
- */
-public final class Stats {
-    /** Kills the mod has seen itself since it was installed (or since the stats were reset). */
-    public int kills;
-    /** Total shown in the SkyBlock Bestiary at the last sync, or -1 when never synced. */
-    public int syncedTotal = -1;
-    /** Value of {@link #kills} at the moment of that sync, so later kills add on top of the Bestiary number. */
-    public int killsAtSync;
-    public int lootShares;
-    /** Drops from your own kills, by Reward enum name. */
-    public Map<String, Integer> drops = new LinkedHashMap<>();
-    /** Drops received through loot shares, by Reward enum name. */
-    public Map<String, Integer> shareDrops = new LinkedHashMap<>();
-    /** Kills since each reward last dropped from one of your own kills. */
-    public Map<String, Integer> since = new LinkedHashMap<>();
+/** Lifetime Lord Jawbus numbers: kills, every reward (own kills and loot shares), dry streaks and the expected count. */
+public final class StatsScreen extends Screen {
+    private final Screen parent;
+    private int px, py, pw, ph;
+    private final boolean confirmReset;
 
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static Stats instance = new Stats();
-
-    public static Stats get() {
-        return instance;
+    public StatsScreen(Screen parent) {
+        this(parent, false);
     }
 
-    private static Path path() {
-        return FabricLoader.getInstance().getConfigDir().resolve("jawbusslots_stats.json");
+    private StatsScreen(Screen parent, boolean confirmReset) {
+        super(Component.literal("Jawbus Roll Stats"));
+        this.parent = parent;
+        this.confirmReset = confirmReset;
     }
 
-    public static void load() {
-        try {
-            Path p = path();
-            if (!Files.isRegularFile(p)) return;
-            try (Reader reader = Files.newBufferedReader(p)) {
-                Stats s = GSON.fromJson(reader, Stats.class);
-                if (s != null) {
-                    if (s.drops == null) s.drops = new LinkedHashMap<>();
-                    if (s.shareDrops == null) s.shareDrops = new LinkedHashMap<>();
-                    if (s.since == null) s.since = new LinkedHashMap<>();
-                    instance = s;
-                }
+    @Override
+    protected void init() {
+        Reward[] rs = Reward.values();
+        pw = 420;
+        ph = 24 + 44 + 12 + rs.length * 11 + 30 + 24 + 8;
+        px = Math.max(4, (this.width - pw) / 2);
+        py = Math.max(4, (this.height - ph) / 2);
+        int by = py + ph - 22;
+        this.addRenderableWidget(Button.builder(Component.literal(confirmReset ? "Click again to erase" : "Reset stats"), b -> {
+            if (confirmReset) Stats.reset();
+            Minecraft.getInstance().gui.setScreen(new StatsScreen(parent, !confirmReset));
+        }).pos(px + 8, by).size(150, 18).build());
+        this.addRenderableWidget(Button.builder(Component.literal("Back"), b -> this.onClose())
+                .pos(px + pw - 158, by).size(150, 18).build());
+    }
+
+    private static String fmt(double v) {
+        return v >= 10 ? String.format(Locale.ROOT, "%.0f", v) : String.format(Locale.ROOT, "%.1f", v);
+    }
+
+    @Override
+    public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+        // intentionally empty
+    }
+
+    @Override
+    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
+        Stats s = Stats.get();
+        g.fill(px, py, px + pw, py + ph, 0xD8000000);
+        g.fill(px, py, px + pw, py + 1, 0xFFFFAA00);
+        g.fill(px, py + ph - 1, px + pw, py + ph, 0xFFFFAA00);
+        g.text(this.font, this.title, px + 8, py + 8, 0xFFFFAA00, true);
+
+        int y = py + 24;
+        g.text(this.font, "Total kills: " + s.totalKills() + (s.isSynced() ? "  (Bestiary)" : "  (not synced)"),
+                px + 8, y, 0xFFFFFFFF, true);
+        g.text(this.font, "Loot shares received: " + s.lootShares, px + 190, y, 0xFF55FFFF, true);
+        y += 11;
+        g.text(this.font, "Seen by the mod: " + s.kills + ".  To sync, open Bestiary > Crimson Isle > Lord Jawbus,",
+                px + 8, y, 0xFF888888, false);
+        y += 10;
+        g.text(this.font, "or type /jawbusRoll kills <number>. New kills are added on top.", px + 8, y, 0xFF888888, false);
+        y += 13;
+        int cName = px + 8, cKill = px + 150, cShare = px + 205, cSince = px + 265, cExp = px + 320, cRatio = px + 370;
+        g.text(this.font, "Reward", cName, y, 0xFFAAAAAA, false);
+        g.text(this.font, "Kills", cKill, y, 0xFFAAAAAA, false);
+        g.text(this.font, "Share", cShare, y, 0xFFAAAAAA, false);
+        g.text(this.font, "Dry", cSince, y, 0xFFAAAAAA, false);
+        g.text(this.font, "Expect", cExp, y, 0xFFAAAAAA, false);
+        g.text(this.font, "How dry", cRatio, y, 0xFFAAAAAA, false);
+        y += 12;
+        for (Reward r : Reward.values()) {
+            g.text(this.font, r.displayName, cName, y, 0xFF000000 | r.rarity.rgb, true);
+            g.text(this.font, String.valueOf(s.dropCount(r)), cKill, y, 0xFFFFFFFF, true);
+            g.text(this.font, String.valueOf(s.shareCount(r)), cShare, y, 0xFFFFFFFF, true);
+            boolean guaranteed = r.killChance() >= 100;
+            g.text(this.font, guaranteed ? "-" : String.valueOf(s.killsSince(r)), cSince, y, 0xFFFFFFFF, true);
+            double p = r.killChance();
+            double expect = Double.isNaN(p) ? Double.NaN : s.kills * p / 100.0;
+            g.text(this.font, Double.isNaN(expect) ? "-" : fmt(expect), cExp, y, 0xFFFFE9B0, true);
+
+            String ratio = "-";
+            int ratioColor = 0xFF888888;
+            if (!guaranteed && expect >= 1.0) {
+                double x = s.killsSince(r) / expect;
+                ratio = fmt(x) + "x";
+                ratioColor = x >= 3.0 ? 0xFFFF5555 : x >= 1.5 ? 0xFFFFAA00 : 0xFF55FF55;
             }
-        } catch (Exception ignored) {
-            // unreadable file: start fresh in memory (the old file is only replaced on the next change)
+            g.text(this.font, ratio, cRatio, y, ratioColor, true);
+            y += 11;
         }
+        g.text(this.font, "Dry = kills since it last dropped from your own kill.  Expect = kills x drop chance.",
+                px + 8, y + 4, 0xFF888888, false);
+        g.text(this.font, "How dry = dry / expected. Green under 1.5x, amber from 1.5x, red from 3x.",
+                px + 8, y + 14, 0xFF888888, false);
+        super.extractRenderState(g, mouseX, mouseY, delta);
     }
 
-    public static void save() {
-        try {
-            Path p = path();
-            Files.createDirectories(p.getParent());
-            try (Writer w = Files.newBufferedWriter(p)) {
-                GSON.toJson(instance, w);
-            }
-        } catch (Exception ignored) {
-            // not worth crashing over
-        }
+    @Override
+    public boolean isPauseScreen() {
+        return false;
     }
 
-    public static void reset() {
-        instance = new Stats();
-        save();
-    }
-
-    /** One of your own Lord Jawbus kills was detected. */
-    public static void recordKill() {
-        Stats s = instance;
-        s.kills++;
-        for (Reward r : Reward.values()) s.since.merge(r.name(), 1, Integer::sum);
-        save();
-    }
-
-    /** A reward was matched to one of your kills (lootShare = false) or arrived through a loot share (true). */
-    public static void recordDrop(Reward r, boolean lootShare) {
-        Stats s = instance;
-        if (lootShare) {
-            s.lootShares++;
-            s.shareDrops.merge(r.name(), 1, Integer::sum);
-        } else {
-            s.drops.merge(r.name(), 1, Integer::sum);
-            s.since.put(r.name(), 0);
-        }
-        save();
-    }
-
-    /** Bestiary total at the last sync plus every kill the mod has counted since; just the mod's own count if never synced. */
-    public int totalKills() {
-        return syncedTotal >= 0 ? syncedTotal + Math.max(0, kills - killsAtSync) : kills;
-    }
-
-    public boolean isSynced() {
-        return syncedTotal >= 0;
-    }
-
-    /** Sets the total to a number read from the Bestiary (or typed in). Later kills are added on top. */
-    public static void syncKills(int total) {
-        Stats s = instance;
-        s.syncedTotal = Math.max(0, total);
-        s.killsAtSync = s.kills;
-        save();
-    }
-
-    public int dropCount(Reward r) {
-        return drops.getOrDefault(r.name(), 0);
-    }
-
-    public int shareCount(Reward r) {
-        return shareDrops.getOrDefault(r.name(), 0);
-    }
-
-    /** Kills since this reward last dropped (or all kills if it never has). */
-    public int killsSince(Reward r) {
-        return since.getOrDefault(r.name(), kills);
+    @Override
+    public void onClose() {
+        Minecraft.getInstance().gui.setScreen(parent);
     }
 }
