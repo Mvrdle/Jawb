@@ -27,7 +27,7 @@ public final class JawbusConfigScreen extends Screen {
         int step = Math.max(16, Math.min(22, (this.height - 50) / 10));
         int bh = step - 2;
         pw = colW * 2 + gap * 3;
-        ph = 24 + step * 9 + 8;
+        ph = 24 + step * 10 + 8;
         px = Math.max(4, (this.width - pw) / 2);
         py = Math.max(4, (this.height - ph) / 2);
         int lx = px + gap, rx = px + gap * 2 + colW;
@@ -47,29 +47,30 @@ public final class JawbusConfigScreen extends Screen {
         toggle(rx, y + step * 2, colW, bh, "Screen shake", () -> c.shakeEnabled, () -> c.shakeEnabled = !c.shakeEnabled);
         toggle(rx, y + step * 3, colW, bh, "Hide chat during animation", () -> c.hideChat, () -> c.hideChat = !c.hideChat);
         toggle(rx, y + step * 4, colW, bh, "Debug chat messages", () -> c.debug, () -> c.debug = !c.debug);
+        toggle(rx, y + step * 5, colW, bh, "Session HUD", () -> c.sessionHud, () -> c.sessionHud = !c.sessionHud);
 
         int half = (colW - 4) / 2;
-        preview(rx, y + step * 5, half, bh, "Tier 1", 1);
-        preview(rx + half + 4, y + step * 5, half, bh, "Tier 2", 2);
-        preview(rx, y + step * 6, half, bh, "Tier 3", 3);
-        preview(rx + half + 4, y + step * 6, half, bh, "Dye (max)", 4);
+        preview(rx, y + step * 6, half, bh, "Tier 1", 1);
+        preview(rx + half + 4, y + step * 6, half, bh, "Tier 2", 2);
+        preview(rx, y + step * 7, half, bh, "Tier 3", 3);
+        preview(rx + half + 4, y + step * 7, half, bh, "Dye (max)", 4);
 
-        // left column, last row: move the animation by dragging it
+        // left column, last rows: move the animation, timings, stats
         this.addRenderableWidget(Button.builder(Component.literal("Move animation..."), b ->
                         net.minecraft.client.Minecraft.getInstance().gui.setScreen(new PositionScreen(this)))
                 .pos(lx, y + step * 6).size(colW, bh).build());
         this.addRenderableWidget(Button.builder(detailLabel(c.detailMode), b -> {
             c.detailMode = c.detailMode == 3 ? 2 : c.detailMode == 0 ? 3 : c.detailMode - 1;   // Auto, High, Medium, Low, Auto...
             b.setMessage(detailLabel(c.detailMode));
-        }).pos(rx, y + step * 7).size(colW, bh).build());
+        }).pos(lx, y + step * 7).size(colW, bh).build());
         this.addRenderableWidget(Button.builder(Component.literal("Timings..."), b ->
                         net.minecraft.client.Minecraft.getInstance().gui.setScreen(new TimingScreen(this)))
-                .pos(lx, y + step * 7).size(colW, bh).build());
+                .pos(lx, y + step * 8).size(colW, bh).build());
         this.addRenderableWidget(Button.builder(Component.literal("Stats..."), b ->
                         net.minecraft.client.Minecraft.getInstance().gui.setScreen(new StatsScreen(this)))
-                .pos(lx, y + step * 8).size(colW, bh).build());
+                .pos(lx, y + step * 9).size(colW, bh).build());
         this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-                .pos(rx, y + step * 8).size(colW, bh).build());
+                .pos(rx, y + step * 9).size(colW, bh).build());
     }
 
     void slider(int x, int y, int w, int h, String label, double min, double max, double cur, DoubleConsumer set) {
