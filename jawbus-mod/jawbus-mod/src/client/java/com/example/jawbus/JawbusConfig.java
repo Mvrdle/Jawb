@@ -32,6 +32,8 @@ public final class JawbusConfig {
     public float shakeIntensity = 1.0f;
     /** Hide the chat while a Lord Jawbus kill is being resolved / animated, so the reward is not spoiled. */
     public boolean hideChat = true;
+    /** Show the small session readout (kills, rate, drops, dry streak) in the corner. */
+    public boolean sessionHud = true;
     /** Where the animation sits: offset from the screen centre as a fraction of the screen (drag it in the menu). */
     public float offsetX = 0f;
     public float offsetY = 0f;
