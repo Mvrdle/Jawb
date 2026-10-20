@@ -11,9 +11,10 @@ import java.util.Locale;
  */
 public enum Reward {
     // chances (percent) are the base drop table from the wiki: normal kill / loot share; NaN = not listed there
-    SILVER_MAGMAFISH("Silver Magmafish", Rarity.EPIC, 1, 1, "silver magmafish", 100, 100),
-    // tier 1, but priority 2 so it beats the guaranteed drops and actually gets its own animation
-    JAWBUS_SHARD("Jawbus Shard", Rarity.RARE, 1, 2, "jawbus shard", Double.NaN, Double.NaN, "jawbuss shard"),
+    // priority is the floor-to-ceiling ladder: anything higher wins the animation, this one is the last resort
+    SILVER_MAGMAFISH("Silver Magmafish", Rarity.EPIC, 1, 0, "silver magmafish", 100, 100),
+    // guaranteed baseline: tier 1, so an empty loot share still shows something, but every real drop outranks it
+    JAWBUS_SHARD("Jawbus Shard", Rarity.RARE, 1, 1, "jawbus shard", 100, 100, "jawbuss shard"),
     MAGMA_LORD_FRAGMENT("Magma Lord Fragment", Rarity.LEGENDARY, 2, 2, "magma lord fragment", 100, 20),
     BOBBIN_SCRIPTURES("Bobbin' Scriptures", Rarity.RARE, 3, 4, "bobbin scriptures", 4, Double.NaN),
     CARMINE_DYE("Carmine Dye", Rarity.DIVINE, 3, 6, "carmine dye", 0.0004, Double.NaN),
