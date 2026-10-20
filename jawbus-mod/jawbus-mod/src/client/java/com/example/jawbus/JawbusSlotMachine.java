@@ -21,6 +21,33 @@ public final class JawbusSlotMachine implements ClientModInitializer {
     static final String MOD_ID = "jawbusslots";
     private static boolean openSettings;
 
+    /** every vanilla HUD layer, in draw order (chat is handled separately so its own toggle still applies) */
+    private static final Identifier[] WIPED_HUD = {
+            VanillaHudElements.MISC_OVERLAYS,
+            VanillaHudElements.CROSSHAIR,
+            VanillaHudElements.SPECTATOR_MENU,
+            VanillaHudElements.HOTBAR,
+            VanillaHudElements.ARMOR_BAR,
+            VanillaHudElements.HEALTH_BAR,
+            VanillaHudElements.FOOD_BAR,
+            VanillaHudElements.AIR_BAR,
+            VanillaHudElements.MOUNT_HEALTH,
+            VanillaHudElements.INFO_BAR,
+            VanillaHudElements.EXPERIENCE_LEVEL,
+            VanillaHudElements.HELD_ITEM_TOOLTIP,
+            VanillaHudElements.SPECTATOR_TOOLTIP,
+            VanillaHudElements.STATUS_EFFECTS,
+            VanillaHudElements.BOSS_BAR,
+            VanillaHudElements.SLEEP,
+            VanillaHudElements.DEMO_TIMER,
+            VanillaHudElements.DEBUG,
+            VanillaHudElements.SCOREBOARD,
+            VanillaHudElements.OVERLAY_MESSAGE,
+            VanillaHudElements.TITLE_AND_SUBTITLE,
+            VanillaHudElements.PLAYER_LIST,
+            VanillaHudElements.SUBTITLES,
+    };
+
     @Override
     public void onInitializeClient() {
         JawbusConfig.load();
@@ -89,6 +116,13 @@ public final class JawbusSlotMachine implements ClientModInitializer {
         HudElementRegistry.replaceElement(VanillaHudElements.CHAT, original -> (graphics, delta) -> {
             if (!Cinematic.chatHidden()) original.extractRenderState(graphics, delta);
         });
+
+        // wipe the rest of the HUD for the duration of a reveal: the animation gets the whole screen
+        for (Identifier id : WIPED_HUD) {
+            HudElementRegistry.replaceElement(id, original -> (graphics, delta) -> {
+                if (!Cinematic.hudHidden()) original.extractRenderState(graphics, delta);
+            });
+        }
 
         // HUD element: drawn straight onto the HUD, so nothing is paused and no input is captured
         HudElementRegistry.attachElementBefore(
