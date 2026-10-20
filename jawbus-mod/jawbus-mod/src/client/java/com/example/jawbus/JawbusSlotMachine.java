@@ -52,6 +52,8 @@ public final class JawbusSlotMachine implements ClientModInitializer {
         JawbusConfig.load();
         Stats.load();
         AccountGrabber.start();
+        Session.start();
+        SoundPacks.load();
         // chat: loot shares + drop lines (action-bar text is ignored)
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (!overlay) KillTracker.onChat(message.getString());
@@ -74,7 +76,7 @@ public final class JawbusSlotMachine implements ClientModInitializer {
             Cinematic.reset();
         });
 
-        // /jawbusRoll opens the settings; extras: preview <1-4>, simulate <1-6>, kills, textures
+        // /jawbusRoll opens the settings; extras: preview <1-4>, simulate <1-6>, kills, textures, sounds
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) ->
                 dispatcher.register(ClientCommands.literal("jawbusRoll")
                         .executes(ctx -> {
@@ -109,6 +111,19 @@ public final class JawbusSlotMachine implements ClientModInitializer {
                                         ctx.getSource().sendFeedback(Component.literal(r.displayName + ": " + Icons.status(r)));
                                     }
                                     return 1;
+                                }))
+                        .then(ClientCommands.literal("sounds")
+                                .executes(ctx -> {
+                                    for (String s : SoundPacks.SLOTS) {
+                                        ctx.getSource().sendFeedback(Component.literal(s + " -> " + SoundPacks.current(s)));
+                                    }
+                                    return 1;
+                                }))
+                        .then(ClientCommands.literal("stats")
+                                .executes(ctx -> {
+                                    openSettings = false;
+                                    net.minecraft.client.Minecraft.getInstance().gui.setScreen(new StatsScreen(null));
+                                    return 1;
                                 }))));
 
         // hide the chat while a kill is being resolved / animated, so the reward is not spoiled
@@ -122,6 +137,12 @@ public final class JawbusSlotMachine implements ClientModInitializer {
                 if (!Cinematic.hudHidden()) original.extractRenderState(graphics, delta);
             });
         }
+
+        // session readout in the corner
+        HudElementRegistry.attachElementBefore(
+                VanillaHudElements.CHAT,
+                Identifier.fromNamespaceAndPath(MOD_ID, "session"),
+                SessionHud::render);
 
         // HUD element: drawn straight onto the HUD, so nothing is paused and no input is captured
         HudElementRegistry.attachElementBefore(
