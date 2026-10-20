@@ -12,6 +12,8 @@ import java.util.Locale;
 public enum Reward {
     // chances (percent) are the base drop table from the wiki: normal kill / loot share; NaN = not listed there
     SILVER_MAGMAFISH("Silver Magmafish", Rarity.EPIC, 1, 1, "silver magmafish", 100, 100),
+    // tier 1, but priority 2 so it beats the guaranteed drops and actually gets its own animation
+    JAWBUS_SHARD("Jawbus Shard", Rarity.RARE, 1, 2, "jawbus shard", Double.NaN, Double.NaN, "jawbuss shard"),
     MAGMA_LORD_FRAGMENT("Magma Lord Fragment", Rarity.LEGENDARY, 2, 2, "magma lord fragment", 100, 20),
     BOBBIN_SCRIPTURES("Bobbin' Scriptures", Rarity.RARE, 3, 4, "bobbin scriptures", 4, Double.NaN),
     CARMINE_DYE("Carmine Dye", Rarity.DIVINE, 3, 6, "carmine dye", 0.0004, Double.NaN),
@@ -39,17 +41,20 @@ public enum Reward {
     public final int tier;
     /** Higher wins when one kill drops several known rewards. */
     public final int priority;
-    private final String key;
+    private final String[] keys;
     private final double killChance, shareChance;
 
-    Reward(String displayName, Rarity rarity, int tier, int priority, String key, double killChance, double shareChance) {
+    Reward(String displayName, Rarity rarity, int tier, int priority, String key, double killChance,
+           double shareChance, String... extraKeys) {
         this.killChance = killChance;
         this.shareChance = shareChance;
         this.displayName = displayName;
         this.rarity = rarity;
         this.tier = tier;
         this.priority = priority;
-        this.key = key;
+        this.keys = new String[extraKeys.length + 1];
+        this.keys[0] = key;
+        System.arraycopy(extraKeys, 0, this.keys, 1, extraKeys.length);
     }
 
     /** Base drop chance in percent for a normal kill (NaN when the wiki table does not list it). */
@@ -88,7 +93,9 @@ public enum Reward {
     /** The reward whose name appears in the text, or null. */
     public static Reward match(String text) {
         String n = normalize(text);
-        for (Reward r : values()) if (n.contains(r.key)) return r;
+        for (Reward r : values()) {
+            for (String k : r.keys) if (n.contains(k)) return r;
+        }
         return null;
     }
 
@@ -96,7 +103,14 @@ public enum Reward {
     public static List<Reward> findAll(String text) {
         String n = normalize(text);
         List<Reward> out = new ArrayList<>();
-        for (Reward r : values()) if (n.contains(r.key)) out.add(r);
+        for (Reward r : values()) {
+            for (String k : r.keys) {
+                if (n.contains(k)) {
+                    out.add(r);
+                    break;
+                }
+            }
+        }
         return out;
     }
 
