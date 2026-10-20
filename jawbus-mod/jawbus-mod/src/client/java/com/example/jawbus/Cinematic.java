@@ -560,7 +560,7 @@ public final class Cinematic {
     }
 
     // ---- picture detail: every merged rectangle costs the game's GUI a fixed amount (and more as their number grows),
-    // so a chunkier golem is far cheaper. Auto starts at 2x2 blocks and moves by itself according to the frame time.
+    // so a chunky golem is far cheaper. Auto starts at 2x2 blocks and moves by itself according to the frame time.
     private static int autoBlock = 2;
     private static long lastFrameNs, lastAdaptNs;
     private static float smoothMs = 8f;
@@ -619,7 +619,7 @@ public final class Cinematic {
         boolean vial = p.reward.maxIntensity();
 
         // soft dim behind everything (never fully opaque, and it fades out with the animation)
-        float[] dim = {0.22f, 0.32f, 0.42f};
+        float[] dim = {0.45f, 0.55f, 0.65f};
         g.fill(0, 0, w, h, argb(0x000000, a * dim[tier - 1]));
 
         // ---- the 3D golem (software-rendered, painted as merged rectangles) ----
@@ -744,8 +744,17 @@ public final class Cinematic {
 
     /** True while the chat should stay hidden so the reward is not given away early. */
     public static boolean chatHidden() {
+        return hidden(JawbusConfig.get().hideChat);
+    }
+
+    /** True while the rest of the HUD stays hidden, so a reveal owns the whole screen. */
+    public static boolean hudHidden() {
+        return hidden(true);
+    }
+
+    private static boolean hidden(boolean gate) {
         JawbusConfig c = JawbusConfig.get();
-        boolean want = c.enabled && c.hideChat
+        boolean want = gate && c.enabled
                 && (current != null || !QUEUE.isEmpty() || System.nanoTime() < gapUntilNs || KillTracker.spoilerWindowOpen());
         if (!want) {
             hiddenSinceNs = 0;
@@ -753,7 +762,7 @@ public final class Cinematic {
         }
         long now = System.nanoTime();
         if (hiddenSinceNs == 0) hiddenSinceNs = now;
-        return now - hiddenSinceNs < 120_000_000_000L;   // safety net: never hide the chat for more than 2 minutes
+        return now - hiddenSinceNs < 120_000_000_000L;   // safety net: never hide the HUD for more than 2 minutes
     }
 
     // ---- explosion particles (sparks and smoke; the debris itself is 3D, drawn by Golem3D) ----
