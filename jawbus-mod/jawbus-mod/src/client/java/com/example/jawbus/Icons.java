@@ -70,6 +70,7 @@ final class Icons {
     private static Item fallback(Reward r) {
         return switch (r) {
             case SILVER_MAGMAFISH -> Items.COD;
+            case JAWBUS_SHARD -> Items.PRISMARINE_SHARD;
             case MAGMA_LORD_FRAGMENT -> Items.MAGMA_CREAM;
             case BOBBIN_SCRIPTURES -> Items.ENCHANTED_BOOK;
             case CARMINE_DYE -> Items.REDSTONE;
