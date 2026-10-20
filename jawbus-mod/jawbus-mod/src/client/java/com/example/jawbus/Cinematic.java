@@ -261,8 +261,16 @@ public final class Cinematic {
     // Audio
     // ------------------------------------------------------------------
 
+    /** base sound -> slot name, so a sound pack can override a cue without touching the cue list */
+    private static final java.util.IdentityHashMap<Object, String> SLOT = new java.util.IdentityHashMap<>();
+
     private static void play(Object snd, float pitch, float vol) {
         SoundEvent ev = snd instanceof SoundEvent se ? se : (SoundEvent) ((Holder<?>) snd).value();
+        String slot = SLOT.get(snd);
+        if (slot != null) {
+            SoundEvent ov = SoundPacks.override(slot);
+            if (ov != null) ev = ov;
+        }
         Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(ev, pitch, Math.max(0f, vol)));
     }
 
@@ -324,6 +332,19 @@ public final class Cinematic {
         Object toast = snd("UI_TOAST_CHALLENGE_COMPLETE", level);
         PRE.clear();
         PRE.addAll(java.util.Arrays.asList(bass, land, boom, chime, blast, level, bell, orb, twinkle, thunder, golem, hurt, reson, crystal, glass, conduit, totem, sonic, growl, portal, toast));
+
+        SLOT.clear();
+        SLOT.put(bass, "rumble");     SLOT.put(land, "impact");
+        SLOT.put(boom, "burst");      SLOT.put(chime, "chime");
+        SLOT.put(blast, "blast");     SLOT.put(level, "levelup");
+        SLOT.put(bell, "bell");       SLOT.put(orb, "orb");
+        SLOT.put(twinkle, "twinkle"); SLOT.put(thunder, "thunder");
+        SLOT.put(golem, "golem");     SLOT.put(hurt, "golem_hurt");
+        SLOT.put(reson, "resonate");  SLOT.put(crystal, "crystal");
+        SLOT.put(glass, "glass");     SLOT.put(conduit, "conduit");
+        SLOT.put(totem, "totem");     SLOT.put(sonic, "sonic");
+        SLOT.put(growl, "growl");     SLOT.put(portal, "portal");
+        SLOT.put(toast, "toast");
 
         float cs1 = tl.cs()[0], ce1 = tl.ce()[0], burst = tl.burst();
         // stage 1 (every tier): first crack, twitch, stagger - subdued
